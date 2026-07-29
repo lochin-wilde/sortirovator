@@ -1,0 +1,32 @@
+# Response headers for Cloudflare Pages (and Netlify, same format).
+#
+# Two jobs: make repeat visits nearly free, and narrow what the page is allowed
+# to do if anything ever gets injected into it.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Cross-Origin-Opener-Policy: same-origin
+  # Everything is served from our own origin -- no CDN, no inline script, no
+  # inline style -- so the policy can be strict without exceptions. connect-src
+  # lists the only three hosts the app talks to; adding a fourth means editing
+  # this line, which is the point.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://musicbrainz.org https://ws.audioscrobbler.com https://api.discogs.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+
+# The entry point must never be cached, or a deploy reaches nobody: it is the
+# file that carries the new ?v= values pointing at everything else.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+
+# Everything else is addressed with ?v=<version>, so a changed file is a changed
+# URL and the old one can be kept forever. This is what makes a repeat visit
+# cost one small request instead of ~150 KB.
+/js/*
+  Cache-Control: public, max-age=31536000, immutable
+/css/*
+  Cache-Control: public, max-age=31536000, immutable
+/data/*
+  Cache-Control: public, max-age=31536000, immutable

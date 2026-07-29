@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.5";
+const APP_VERSION = "2026.07.29.9";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -85,6 +85,7 @@ const ui = {
   removeSilence: el("remove-silence"),
   addPrefix: el("add-prefix"),
   useMusicbrainz: el("use-musicbrainz"),
+  useDiscogs: el("use-discogs"),
   lastfmKey: el("lastfm-key"),
   start: el("start"),
   cancel: el("cancel"),
@@ -171,6 +172,31 @@ function isSupported(file) {
 
 function formatMegabytes(bytes) {
   return (bytes / (1024 * 1024)).toFixed(0);
+}
+
+/*
+ * jszip is 28 KB gzipped and is not needed until a batch actually starts, which
+ * is after the user has picked files and pressed the button -- long enough that
+ * the download never delays anything they are waiting on. Loading it up front
+ * made it a quarter of the first-paint payload for a page that may never build
+ * an archive at all.
+ */
+let _zipLibraryPromise = null;
+
+function ensureZipLibrary() {
+  if (typeof JSZip !== "undefined") return Promise.resolve();
+  if (_zipLibraryPromise) return _zipLibraryPromise;
+  _zipLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "js/lib/jszip.min.js?v=" + APP_VERSION;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      _zipLibraryPromise = null;
+      reject(new Error("jszip failed to load"));
+    };
+    document.head.appendChild(script);
+  });
+  return _zipLibraryPromise;
 }
 
 function handleSelection(fileList) {
@@ -409,7 +435,7 @@ async function resolveGenre(context) {
   }
 
   const tagGenre = tags.genre ? normalizeGenre(tags.genre, genresMap) : "Unknown";
-  const lookupsEnabled = options.useMusicbrainz || Boolean(options.lastfmKey);
+  const lookupsEnabled = options.useMusicbrainz || options.useDiscogs || Boolean(options.lastfmKey);
 
   /*
    * With lookups enabled the file tag is consulted only after the online
@@ -437,50 +463,93 @@ async function resolveGenre(context) {
    * must not outrank a source that actually looked at the track.
    */
   if (artist && track) {
-    if (options.useMusicbrainz) {
-      const fromRecording = await musicbrainzGenre(artist, track, genresMap, recordingId);
-      if (fromRecording) {
-        return { genre: fromRecording.genre, source: 'MusicBrainz recording tag "' + fromRecording.tag + '"' };
-      }
-    }
-    if (options.lastfmKey) {
-      const fromLastfm = await lastfmGenre(artist, track, options.lastfmKey, genresMap);
-      if (fromLastfm) {
-        return { genre: fromLastfm.genre, source: 'Last.fm track tag "' + fromLastfm.tag + '"' };
-      }
-    }
-    /*
-     * For a remix, the remixer's tags come before the original artist's. A
-     * remix belongs to whoever made it: an Aerosmith track flipped into
-     * dubstep is not blues rock, and a big-band track remixed by Lushreds is
-     * not jazz, however accurate those tags are about the original artist.
-     */
     const remixer = remixerFromTitle(track);
-    if (remixer && options.lastfmKey) {
-      const fromRemixer = await lastfmArtistGenre(remixer, options.lastfmKey, genresMap);
-      if (fromRemixer) {
-        return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer };
-      }
-    }
-    if (remixer && options.useMusicbrainz) {
-      const fromRemixerMb = await musicbrainzArtistGenre(remixer, genresMap);
-      if (fromRemixerMb) {
-        return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer };
-      }
-    }
 
-    // Artist-level sources, in measured order of usefulness: Last.fm's artist
-    // tags are much better populated than MusicBrainz's for dance music.
-    if (options.lastfmKey) {
-      const fromLastfmArtist = await lastfmArtistGenre(artist, options.lastfmKey, genresMap);
-      if (fromLastfmArtist) {
-        return { genre: fromLastfmArtist.genre, source: 'Last.fm artist tag "' + fromLastfmArtist.tag + '" (artist-level)' };
+    /*
+     * A remix belongs to whoever made it, and every lookup keyed on the
+     * original artist will say otherwise. This is not a small effect and not a
+     * hypothetical one -- measured against Discogs:
+     *
+     *   Aerosmith - Dream On (Yultron Remix)        -> Blues Rock, Hard Rock
+     *   Fleetwood Mac - Dreams (Dave Winnel Remix)  -> Vocal
+     *
+     * Those are the right answers about the original recordings and useless
+     * answers about the files in hand, which are a dubstep flip and a house
+     * record. So when the title carries a remix marker the original artist is
+     * not consulted at all -- not skipped in favour of a better answer, but
+     * excluded, because its answer is confidently wrong.
+     *
+     * The remix's own release is tried first: Discogs often has it, catalogued
+     * under the remixer with its own style. Only if that fails do we fall back
+     * to what the remixer is generally known for.
+     */
+    if (remixer) {
+      const core = splitTitle(track).core;
+      const fromRemixRelease = options.useDiscogs
+        ? await discogsGenre(remixer, core, genresMap)
+        : null;
+      if (fromRemixRelease) {
+        return {
+          genre: fromRemixRelease.genre,
+          source: 'Discogs style "' + fromRemixRelease.tag + '" for the ' + remixer + ' remix',
+        };
       }
-    }
-    if (options.useMusicbrainz) {
-      const fromArtist = await musicbrainzArtistGenre(artist, genresMap);
-      if (fromArtist) {
-        return { genre: fromArtist.genre, source: 'MusicBrainz artist tag "' + fromArtist.tag + '" (artist-level)' };
+      if (options.lastfmKey) {
+        const fromRemixer = await lastfmArtistGenre(remixer, options.lastfmKey, genresMap);
+        if (fromRemixer) {
+          return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer };
+        }
+      }
+      if (options.useMusicbrainz) {
+        const fromRemixerMb = await musicbrainzArtistGenre(remixer, genresMap);
+        if (fromRemixerMb) {
+          return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer };
+        }
+      }
+      /*
+       * Nothing known about the remixer. Falling through to the original artist
+       * from here would reintroduce exactly the Aerosmith answer, so the audio
+       * fallback at the bottom of this function is the better outcome.
+       */
+    } else {
+      /*
+       * Track-level sources first, Discogs ahead of the rest. Its styles are
+       * written per release by collectors, which is finer than anything the
+       * others carry, and it answers where they do not: Last.fm's track.getInfo
+       * now returns an empty tag list for most tracks.
+       */
+      const fromDiscogs = options.useDiscogs
+        ? await discogsGenre(artist, track, genresMap)
+        : null;
+      if (fromDiscogs) {
+        return { genre: fromDiscogs.genre, source: 'Discogs style "' + fromDiscogs.tag + '"' };
+      }
+      if (options.useMusicbrainz) {
+        const fromRecording = await musicbrainzGenre(artist, track, genresMap, recordingId);
+        if (fromRecording) {
+          return { genre: fromRecording.genre, source: 'MusicBrainz recording tag "' + fromRecording.tag + '"' };
+        }
+      }
+      if (options.lastfmKey) {
+        const fromLastfm = await lastfmGenre(artist, track, options.lastfmKey, genresMap);
+        if (fromLastfm) {
+          return { genre: fromLastfm.genre, source: 'Last.fm track tag "' + fromLastfm.tag + '"' };
+        }
+      }
+
+      // Artist-level sources, in measured order of usefulness: Last.fm's artist
+      // tags are much better populated than MusicBrainz's for dance music.
+      if (options.lastfmKey) {
+        const fromLastfmArtist = await lastfmArtistGenre(artist, options.lastfmKey, genresMap);
+        if (fromLastfmArtist) {
+          return { genre: fromLastfmArtist.genre, source: 'Last.fm artist tag "' + fromLastfmArtist.tag + '" (artist-level)' };
+        }
+      }
+      if (options.useMusicbrainz) {
+        const fromArtist = await musicbrainzArtistGenre(artist, genresMap);
+        if (fromArtist) {
+          return { genre: fromArtist.genre, source: 'MusicBrainz artist tag "' + fromArtist.tag + '" (artist-level)' };
+        }
       }
     }
   }
@@ -1004,6 +1073,7 @@ function readOptions() {
       sampleRate: ui.sampleRate.value,
     },
     useMusicbrainz: ui.useMusicbrainz.checked,
+    useDiscogs: ui.useDiscogs.checked,
     lastfmKey: ui.lastfmKey.value.trim(),
   };
 }
@@ -1026,6 +1096,13 @@ async function runBatch() {
   const options = readOptions();
   if (!options.steps.fixNames && !options.steps.sort && !options.steps.bpmKey && !options.steps.loudness) {
     log(t("msg.nothingToDo"));
+    return;
+  }
+
+  try {
+    await ensureZipLibrary();
+  } catch (e) {
+    log(t("msg.zipUnavailable"));
     return;
   }
 
