@@ -38,7 +38,19 @@ function inviteHash(text) {
   return h.toString(16).padStart(8, "0");
 }
 
-// Hashes of the codes handed out for testing. Add entries with inviteHash().
+/*
+ * Codes for local development only.
+ *
+ * Stored as hashes, not because that protects anything -- a short code falls to
+ * a wordlist instantly and this file is public anyway -- but so a code is not
+ * readable by someone glancing over a shoulder at the source.
+ *
+ * The owner's code is deliberately NOT here. On the deployed site it lives in
+ * the Cloudflare environment, where the middleware checks it before serving any
+ * file; writing it into this file would publish it to anyone who opens the page,
+ * and a code that everyone has is not an individual code. These four are
+ * throwaways for `python3 -m http.server`.
+ */
 const INVITE_HASHES = new Set([
   inviteHash("SORTIR-2026"),
   inviteHash("DJ-TEST-01"),

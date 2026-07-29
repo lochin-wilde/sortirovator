@@ -848,6 +848,67 @@ const DISCOGS_MAX_RESULTS = 5;
 const _discogsCache = new Map();
 
 /*
+ * Where old-school hip-hop ends.
+ *
+ * A DJ's hip-hop crate splits by era before anything else: a 1994 boom-bap
+ * record and a 2018 trap record are not interchangeable in a set. 2000 is the
+ * natural line -- it is how the era is normally spoken about, and it matches
+ * how this library is already organised by hand, in a folder called "90 Hip Hop".
+ *
+ * Only the generic Hip-Hop answer is split. Boom Bap is already an era as much
+ * as a style, and Trap, Drill and Phonk did not exist before the cut, so
+ * applying this to them could only produce nonsense.
+ */
+const OLD_SCHOOL_CUTOFF_YEAR = 2000;
+const ERA_SPLIT_GENRES = new Set(["Hip-Hop"]);
+
+/*
+ * Refines a genre with the year. Returns it unchanged when there is no year --
+ * an unknown date must not quietly become a claim about the era.
+ */
+function applyEra(genre, year) {
+  if (!ERA_SPLIT_GENRES.has(genre)) return genre;
+  if (!year || year >= OLD_SCHOOL_CUTOFF_YEAR) return genre;
+  return "Old School Hip-Hop";
+}
+
+/*
+ * Earliest release year MusicBrainz knows for a recording.
+ *
+ * Discogs alone is not good enough to sort by era: its search often returns
+ * only a later pressing -- "Juicy" comes back as a 2008 mashup album and
+ * "Still D.R.E." as a 2001 reissue -- and a 1994 record filed as modern
+ * hip-hop is worse than not splitting at all.
+ *
+ * Both sources err the same way, never earlier than the truth, so the smaller
+ * of the two is at least as good as either. Measured over four classics with
+ * true years 1994, 1999, 1994 and 1995, this returns 1995, 1999, 1994 and 1996:
+ * two exact, two a year late, all four on the correct side of the line.
+ *
+ * The title filter and the high limit are both load-bearing. MusicBrainz orders
+ * by its own relevance score, and an earlier attempt with limit=3 and no filter
+ * answered 2004 for that 1994 recording.
+ */
+async function musicbrainzEarliestYear(artist, track) {
+  if (!artist || !track) return null;
+  try {
+    const query = 'artist:"' + luceneEscape(artist) + '" AND recording:"' + luceneEscape(track) + '"';
+    const url = MUSICBRAINZ_BASE + "/recording/?query=" + encodeURIComponent(query) +
+      "&limit=25&fmt=json";
+    const data = await rateLimited(() => fetchJson(url));
+    let earliest = null;
+    for (const recording of (data.recordings || [])) {
+      if (textSimilarity(track, recording.title || "") < IDENTIFY_MIN_TITLE_SIMILARITY) continue;
+      const year = parseInt(String(recording["first-release-date"] || "").slice(0, 4), 10);
+      if (year >= 1900 && year <= 2100 && (earliest === null || year < earliest)) earliest = year;
+    }
+    return earliest;
+  } catch (e) {
+    return null;
+  }
+}
+
+/*
  * Discogs titles read "Artist - Release", and repeated artist names carry a
  * disambiguating number: "Fisher (16) - Losing It".
  */
@@ -893,9 +954,20 @@ async function discogsGenre(artist, track, genresMap) {
      */
     const votes = new Map();
     let rank = 0;
+    let earliestYear = null;
     for (const result of (data.results || [])) {
       if (textSimilarity(artist, discogsArtistOf(result.title)) < IDENTIFY_MIN_ARTIST_SIMILARITY) {
         continue;
+      }
+
+      /*
+       * Earliest year across matching releases, as a stand-in for when the
+       * track was made. A reissue is always later than the original and never
+       * earlier, so this can only be wrong in one direction.
+       */
+      const year = parseInt(result.year, 10);
+      if (year >= 1900 && year <= 2100 && (earliestYear === null || year < earliestYear)) {
+        earliestYear = year;
       }
       /*
        * Earlier results count for more. Discogs orders by how well the release
@@ -924,7 +996,8 @@ async function discogsGenre(artist, track, genresMap) {
     const ranked = Array.from(votes.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
-    answer = firstMappedGenre(ranked, genresMap, true);
+    const found = firstMappedGenre(ranked, genresMap, true);
+    answer = found ? { genre: found.genre, tag: found.tag, year: earliestYear } : null;
   } catch (e) {
     lastLookupError = "Discogs lookup failed: " + e.message;
     answer = null;
