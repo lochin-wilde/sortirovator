@@ -848,6 +848,33 @@ const DISCOGS_MAX_RESULTS = 5;
 const _discogsCache = new Map();
 
 /*
+ * Where old-school hip-hop ends.
+ *
+ * A DJ's hip-hop crate splits by era before it splits by anything else: a 1994
+ * boom-bap record and a 2018 trap record are not interchangeable in a set, and
+ * a single "Hip-Hop" folder makes the whole crate unusable. 2000 is the natural
+ * line -- it is how the era is normally spoken about, and it matches how this
+ * library is already organised by hand, in a folder called "90 Hip Hop".
+ *
+ * Only the generic Hip-Hop answer is split. Boom Bap is already an era as much
+ * as a style, and Trap, Drill and Phonk did not exist before the cut, so
+ * applying this to them could only produce nonsense.
+ */
+const OLD_SCHOOL_CUTOFF_YEAR = 2000;
+const ERA_SPLIT_GENRES = new Set(["Hip-Hop"]);
+
+/*
+ * Refines a genre with the year, where the year says something the tags cannot.
+ * Returns the genre unchanged when there is no year -- an unknown date must not
+ * quietly become a claim about the era.
+ */
+function applyEra(genre, year) {
+  if (!ERA_SPLIT_GENRES.has(genre)) return genre;
+  if (!year || year >= OLD_SCHOOL_CUTOFF_YEAR) return genre;
+  return "Old School Hip-Hop";
+}
+
+/*
  * Discogs titles read "Artist - Release", and repeated artist names carry a
  * disambiguating number: "Fisher (16) - Losing It".
  */
@@ -893,9 +920,27 @@ async function discogsGenre(artist, track, genresMap) {
      */
     const votes = new Map();
     let rank = 0;
+    let earliestYear = null;
     for (const result of (data.results || [])) {
       if (textSimilarity(artist, discogsArtistOf(result.title)) < IDENTIFY_MIN_ARTIST_SIMILARITY) {
         continue;
+      }
+
+      /*
+       * Earliest year across the matching releases, as a stand-in for when the
+       * track was made. A reissue is always later than the original and never
+       * earlier, so the minimum can only be wrong in one direction -- too late,
+       * when the original pressing is missing from the results. Measured:
+       * Wu-Tang's "C.R.E.A.M." comes out 1993 against a true 1993, and Nas's
+       * "N.Y. State of Mind" 1999 against a true 1994, because only later
+       * compilations were matched.
+       *
+       * MusicBrainz was tried for this and is worse: its recording search puts
+       * re-recordings first, giving 2004 for that same Nas track.
+       */
+      const year = parseInt(result.year, 10);
+      if (year >= 1900 && year <= 2100 && (earliestYear === null || year < earliestYear)) {
+        earliestYear = year;
       }
       /*
        * Earlier results count for more. Discogs orders by how well the release
@@ -924,7 +969,8 @@ async function discogsGenre(artist, track, genresMap) {
     const ranked = Array.from(votes.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
-    answer = firstMappedGenre(ranked, genresMap, true);
+    const found = firstMappedGenre(ranked, genresMap, true);
+    answer = found ? { genre: found.genre, tag: found.tag, year: earliestYear } : null;
   } catch (e) {
     lastLookupError = "Discogs lookup failed: " + e.message;
     answer = null;
