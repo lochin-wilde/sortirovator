@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.3";
+const APP_VERSION = "2026.07.29.4";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -334,7 +334,7 @@ function setFileLabel(text) {
 
 function normalizeGenre(genre, genresMap) {
   if (!genre) return "Unknown";
-  return genresMap[genre.toLowerCase()] || "Unknown";
+  return genreForTag(genresMap, genre.toLowerCase()) || "Unknown";
 }
 
 /*
