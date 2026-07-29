@@ -296,6 +296,24 @@ function isNonGenreTag(tag) {
  * parent it sits under -- nothing else in the app cares about the hierarchy.
  */
 /*
+ * Genre lookup by tag. A plain map[tag] is not safe here: the tag comes from a
+ * file's own metadata or from a community-edited tag list, and "constructor" or
+ * "__proto__" are perfectly legal strings. map["constructor"] returns the Object
+ * function, which then travels on as if it were a genre -- it reached
+ * escapeHtml(), which has no .replace on a function, and threw, and the thrown
+ * error took the whole results table down with it. One crafted file was enough
+ * to blank the results for an entire batch.
+ *
+ * Own-property check only, so inherited members are invisible.
+ */
+function genreForTag(map, tag) {
+  if (!map || !tag) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(map, tag)) return undefined;
+  const value = map[tag];
+  return typeof value === "string" ? value : undefined;
+}
+
+/*
  * How much support a subgenre tag needs, relative to the parent it is trying to
  * displace, before it is believed. Set from the measured gap between real
  * signals (0.13-0.32 of the parent) and stray ones (0.01).
@@ -345,7 +363,7 @@ function firstMappedGenre(tags, genresMap, preferSpecific) {
     const weight = raw && typeof raw === "object" ? Number(raw.count) : NaN;
     const tag = String(name || "").toLowerCase().trim().replace(/^#/, "");
     if (isNonGenreTag(tag)) continue;
-    const genre = genresMap[tag];
+    const genre = genreForTag(genresMap, tag);
     if (!genre) continue;
     if (!preferSpecific) return { genre, tag };
 
@@ -593,7 +611,20 @@ function extractGenreNames(entity) {
   return byCount(entity.genres).concat(byCount(entity.tags));
 }
 
+/*
+ * MusicBrainz identifiers are UUIDs, and they are pasted straight into a request
+ * path. They arrive inside a JSON response, so they are not ours to trust: a
+ * value carrying "../" or "?" would silently point the next request somewhere
+ * else. Checking the shape is one line and removes the question.
+ */
+const MBID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isMbid(value) {
+  return typeof value === "string" && MBID_PATTERN.test(value);
+}
+
 async function musicbrainzRecordingTags(recordingId) {
+  if (!isMbid(recordingId)) return [];
   const url = MUSICBRAINZ_BASE + "/recording/" + recordingId + "?inc=tags+genres&fmt=json";
   try {
     const data = await rateLimited(() => fetchJson(url));
@@ -627,7 +658,7 @@ async function musicbrainzArtistTags(artist) {
       encodeURIComponent("artist:(" + luceneEscape(artist) + ")") + "&limit=1&fmt=json";
     const found = await rateLimited(() => fetchJson(searchUrl));
     const candidate = (found.artists || [])[0];
-    if (candidate && candidate.id && textSimilarity(artist, candidate.name || "") >= IDENTIFY_MIN_ARTIST_SIMILARITY) {
+    if (candidate && isMbid(candidate.id) && textSimilarity(artist, candidate.name || "") >= IDENTIFY_MIN_ARTIST_SIMILARITY) {
       const url = MUSICBRAINZ_BASE + "/artist/" + candidate.id + "?inc=tags+genres&fmt=json";
       const data = await rateLimited(() => fetchJson(url));
       names = extractGenreNames(data);
