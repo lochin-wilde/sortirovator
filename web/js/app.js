@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.9";
+const APP_VERSION = "2026.07.29.10";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -522,7 +522,30 @@ async function resolveGenre(context) {
         ? await discogsGenre(artist, track, genresMap)
         : null;
       if (fromDiscogs) {
-        return { genre: fromDiscogs.genre, source: 'Discogs style "' + fromDiscogs.tag + '"' };
+        /*
+         * The one place a release year changes the answer, and the only genre
+         * family where it does. Asking two sources costs a rate-limited second,
+         * so it is asked only when the answer is the undivided Hip-Hop bucket --
+         * never for Trap, Boom Bap or anything outside hip-hop.
+         *
+         * A track neither source can date stays in Hip-Hop rather than being
+         * guessed into an era.
+         */
+        let genre = fromDiscogs.genre;
+        let source = 'Discogs style "' + fromDiscogs.tag + '"';
+        if (ERA_SPLIT_GENRES.has(genre)) {
+          const fromMb = await musicbrainzEarliestYear(artist, track);
+          const year = [fromDiscogs.year, fromMb]
+            .filter((y) => typeof y === "number" && y > 0)
+            .reduce((a, b) => Math.min(a, b), Infinity);
+          const known = isFinite(year) ? year : null;
+          const withEra = applyEra(genre, known);
+          if (withEra !== genre) {
+            genre = withEra;
+            source = 'Discogs style "' + fromDiscogs.tag + '", first released ' + known;
+          }
+        }
+        return { genre, source };
       }
       if (options.useMusicbrainz) {
         const fromRecording = await musicbrainzGenre(artist, track, genresMap, recordingId);
