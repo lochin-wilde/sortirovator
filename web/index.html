@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Музыкальный сортир</title>
+<link rel="stylesheet" href="css/styles.css?v=2026.07.28.5">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-top">
+    <h1>Музыкальный сортир</h1>
+    <div class="masthead-controls">
+      <div class="lang-switch" role="group">
+        <button type="button" class="lang-button" data-lang="ru">RU</button>
+        <button type="button" class="lang-button" data-lang="en">EN</button>
+      </div>
+      <button type="button" class="link-button" id="invite-signout" data-i18n="invite.signout"></button>
+    </div>
+  </div>
+  <p class="tagline" data-i18n="app.tagline"></p>
+</header>
+
+<div class="invite-gate" id="invite-gate" hidden>
+  <div class="invite-card">
+    <h2 data-i18n="invite.title"></h2>
+    <p class="hint" data-i18n="invite.intro"></p>
+    <div class="invite-row">
+      <input type="text" id="invite-code" data-i18n-placeholder="invite.placeholder" autocomplete="off" spellcheck="false">
+      <button type="button" class="button primary" id="invite-submit" data-i18n="invite.submit"></button>
+    </div>
+    <p class="invite-error" id="invite-error" hidden data-i18n="invite.wrong"></p>
+    <p class="hint invite-note" data-i18n="invite.note"></p>
+  </div>
+</div>
+
+<main id="app-main">
+
+<section class="step" id="step-1">
+  <h2><span class="step-number">1</span> <span data-i18n="step1.title"></span></h2>
+  <div class="picker">
+    <button type="button" class="button" id="pick-files" data-i18n="step1.pickFiles"></button>
+    <button type="button" class="button secondary" id="pick-folder" data-i18n="step1.pickFolder"></button>
+    <input type="file" id="file-input" multiple accept=".mp3,.wav,.flac,.m4a,audio/*" hidden>
+    <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+  </div>
+  <p class="hint" id="picker-hint" data-i18n="step1.hint"></p>
+  <div class="file-summary" id="file-summary" hidden></div>
+</section>
+
+<section class="step" id="step-2">
+  <h2><span class="step-number">2</span> <span data-i18n="step2.title"></span></h2>
+
+  <div class="options-grid">
+    <label class="toggle"><input type="checkbox" id="step-fix-names"> <span data-i18n="step2.fixNames"></span>
+      <em data-i18n="step2.fixNamesHint"></em></label>
+    <label class="toggle"><input type="checkbox" id="step-sort" checked> <span data-i18n="step2.sort"></span>
+      <em data-i18n="step2.sortHint"></em></label>
+    <label class="toggle"><input type="checkbox" id="step-bpm-key" checked> <span data-i18n="step2.bpmKey"></span>
+      <em data-i18n="step2.bpmKeyHint"></em></label>
+    <label class="toggle"><input type="checkbox" id="step-loudness"> <span data-i18n="step2.loudness"></span>
+      <em data-i18n="step2.loudnessHint"></em></label>
+  </div>
+
+  <fieldset class="panel" id="loudness-panel" disabled>
+    <legend data-i18n="loudness.legend"></legend>
+    <div class="field-row">
+      <label><span data-i18n="loudness.mode"></span>
+        <select id="loudness-mode">
+          <option value="short_term" data-i18n="loudness.shortTerm"></option>
+          <option value="integrated" selected data-i18n="loudness.integrated"></option>
+          <option value="convert_only" data-i18n="loudness.convertOnly"></option>
+        </select>
+      </label>
+      <label><span data-i18n="loudness.target"></span>
+        <input type="number" id="target-lufs" value="-16" step="0.5" min="-40" max="0">
+      </label>
+      <label><span data-i18n="loudness.format"></span>
+        <select id="output-format">
+          <option value="wav" selected data-i18n="loudness.wav"></option>
+          <option value="mp3" data-i18n="loudness.mp3"></option>
+        </select>
+      </label>
+      <label><span data-i18n="loudness.sampleRate"></span>
+        <select id="sample-rate">
+          <option value="same" selected data-i18n="loudness.sameRate"></option>
+          <option value="44100">44100 Hz</option>
+          <option value="48000">48000 Hz</option>
+        </select>
+      </label>
+    </div>
+    <div class="field-row checkboxes">
+      <label><input type="checkbox" id="safe-limiter"> <span data-i18n="loudness.limiter"></span></label>
+      <label><input type="checkbox" id="remove-silence"> <span data-i18n="loudness.trim"></span></label>
+      <label><input type="checkbox" id="add-prefix"> <span data-i18n="loudness.prefix"></span></label>
+    </div>
+  </fieldset>
+
+  <fieldset class="panel">
+    <legend data-i18n="lookups.legend"></legend>
+    <div class="field-row checkboxes">
+      <label><input type="checkbox" id="use-musicbrainz" checked> <span data-i18n="lookups.musicbrainz"></span></label>
+    </div>
+    <div class="field-row">
+      <label class="grow"><span data-i18n="lookups.lastfm"></span>
+        <input type="text" id="lastfm-key" data-i18n-placeholder="lookups.lastfmPlaceholder" autocomplete="off">
+      </label>
+    </div>
+    <p class="hint" data-i18n="lookups.hint"></p>
+  </fieldset>
+</section>
+
+<section class="step" id="step-3">
+  <h2><span class="step-number">3</span> <span data-i18n="step3.title"></span></h2>
+  <div class="run-bar">
+    <button type="button" class="button primary" id="start" disabled data-i18n="step3.start"></button>
+    <button type="button" class="button" id="cancel" hidden data-i18n="step3.cancel"></button>
+    <button type="button" class="button secondary" id="download" disabled data-i18n="step3.download"></button>
+    <button type="button" class="button" id="reset" disabled data-i18n="step3.reset"></button>
+  </div>
+  <p class="hint" id="reset-hint" hidden data-i18n="step3.resetHint"></p>
+
+  <div class="progress-block" id="progress-block" hidden>
+    <div class="progress-line">
+      <span id="batch-label" data-i18n="step3.batch"></span>
+      <div class="bar"><div class="bar-fill" id="batch-bar"></div></div>
+      <span class="counter" id="batch-counter">0 / 0</span>
+    </div>
+    <div class="progress-line">
+      <span id="file-label" data-i18n="step3.currentFile"></span>
+      <div class="bar"><div class="bar-fill file" id="file-bar"></div></div>
+      <span class="counter" id="file-stage"></span>
+    </div>
+  </div>
+
+  <p class="hint feedback-hint" data-i18n="feedback.hint"></p>
+  <div class="feedback-bar">
+    <button type="button" class="button small" id="feedback-export" data-i18n="feedback.export"></button>
+    <button type="button" class="button small" id="feedback-clear" data-i18n="feedback.clear"></button>
+  </div>
+
+  <div class="table-tools" id="table-tools" hidden>
+    <input type="search" id="table-filter" data-i18n-placeholder="table.filterPlaceholder" autocomplete="off">
+    <span class="hint" id="table-count"></span>
+    <span class="hint" data-i18n="table.sortHint"></span>
+  </div>
+
+  <div class="results-wrap">
+    <table class="results" id="results" hidden>
+      <thead>
+        <tr>
+          <th class="sortable" data-sort="name" data-i18n="table.file"></th>
+          <th class="sortable" data-sort="artist" data-i18n="table.artist"></th>
+          <th class="sortable" data-sort="genre" data-i18n="table.genre"></th>
+          <th class="sortable" data-sort="bpm" data-i18n="table.bpm"></th>
+          <th class="sortable" data-sort="key" data-i18n="table.key"></th>
+          <th class="sortable" data-sort="loudness" data-i18n="table.loudness"></th>
+          <th data-i18n="table.output"></th>
+        </tr>
+      </thead>
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <details class="log-box" id="log-box">
+    <summary data-i18n="log.title"></summary>
+    <pre id="log"></pre>
+  </details>
+</section>
+
+</main>
+
+<!-- jszip 3.10.1, served from our own origin: it handles every file the user
+     loaded, so it is not a dependency to fetch from someone else's server. -->
+<script src="js/lib/jszip.min.js?v=2026.07.28.5"></script>
+<script src="js/i18n.js?v=2026.07.28.5"></script>
+<script src="js/invite.js?v=2026.07.28.5"></script>
+<script src="js/feedback.js?v=2026.07.28.5"></script>
+<script src="js/tags.js?v=2026.07.28.5"></script>
+<script src="js/identify.js?v=2026.07.28.5"></script>
+<script src="js/app.js?v=2026.07.28.5"></script>
+</body>
+</html>
