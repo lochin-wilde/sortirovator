@@ -25,13 +25,31 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.4";
+const APP_VERSION = "2026.07.29.5";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
 const KEY_CONFIDENCE_THRESHOLD = 0.50;
 const ANALYSIS_MAX_SECONDS = 120;
 const GENRE_ANALYSIS_RATE = 22050;
+
+/*
+ * Largest file accepted, per file.
+ *
+ * The limit exists because decoding expands audio rather than compressing it:
+ * decodeAudioData hands back 32-bit floats per channel, so an hour of stereo at
+ * 44.1 kHz occupies about 1.4 GB in memory whatever it weighed on disk. With
+ * several workers decoding at once, a tab can be killed outright, and a killed
+ * tab loses the whole batch with nothing written out.
+ *
+ * 500 MB clears any real track by a wide margin -- a ten-minute 24-bit WAV is
+ * about 160 MB -- while stopping the case this is really aimed at, someone
+ * dropping in a two-hour recorded set. Note the check is on the file as stored,
+ * which for a heavily compressed format understates what decoding will cost, so
+ * a very long MP3 can still be uncomfortable. Only reading the duration first
+ * would fix that properly, and it costs a second load per file.
+ */
+const MAX_FILE_BYTES = 500 * 1024 * 1024;
 
 const state = {
   files: [],
@@ -151,27 +169,53 @@ function isSupported(file) {
   return SUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext));
 }
 
+function formatMegabytes(bytes) {
+  return (bytes / (1024 * 1024)).toFixed(0);
+}
+
 function handleSelection(fileList) {
   const all = Array.from(fileList);
-  const accepted = all.filter(isSupported);
-  const rejected = all.filter((f) => !isSupported(f));
+  const supported = all.filter(isSupported);
+  const wrongType = all.filter((f) => !isSupported(f));
+  const tooBig = supported.filter((f) => f.size > MAX_FILE_BYTES);
+  const accepted = supported.filter((f) => f.size <= MAX_FILE_BYTES);
 
   state.files = accepted;
-  ui.fileSummary.hidden = accepted.length === 0 && rejected.length === 0;
+  ui.fileSummary.hidden = all.length === 0;
 
-  let html = "<strong>" + accepted.length + " track" + (accepted.length === 1 ? "" : "s") + " selected</strong>";
-  if (rejected.length > 0) {
-    html += " &middot; " + rejected.length + " skipped (unsupported extension)";
+  let html = "<strong>" +
+    escapeHtml(t("summary.selected", { count: accepted.length })) + "</strong>";
+  if (wrongType.length > 0) {
+    html += " &middot; " + escapeHtml(t("summary.skippedType", { count: wrongType.length }));
+  }
+  if (tooBig.length > 0) {
+    html += " &middot; " + escapeHtml(t("summary.skippedSize", {
+      count: tooBig.length, limit: formatMegabytes(MAX_FILE_BYTES),
+    }));
   }
   if (accepted.length > 0) {
     const preview = accepted.slice(0, 12).map((f) => "<li>" + escapeHtml(f.name) + "</li>").join("");
-    const more = accepted.length > 12 ? "<li>and " + (accepted.length - 12) + " more</li>" : "";
+    const more = accepted.length > 12
+      ? "<li>" + escapeHtml(t("summary.more", { count: accepted.length - 12 })) + "</li>"
+      : "";
     html += "<ul>" + preview + more + "</ul>";
   }
   ui.fileSummary.innerHTML = html;
 
+  // Named individually: "3 files were too big" leaves the user hunting for which.
+  for (const file of tooBig) {
+    log(t("msg.tooBig", {
+      name: file.name,
+      size: formatMegabytes(file.size),
+      limit: formatMegabytes(MAX_FILE_BYTES),
+    }));
+  }
+
   ui.start.disabled = accepted.length === 0 || state.running;
-  log(t("msg.selected", { count: accepted.length, skipped: rejected.length }));
+  log(t("msg.selected", {
+    count: accepted.length,
+    skipped: wrongType.length + tooBig.length,
+  }));
 }
 
 function escapeHtml(text) {

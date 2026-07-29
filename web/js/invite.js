@@ -8,9 +8,13 @@
  * with a code rather than stumbling in -- and to have the flow, the UI and the
  * storage in place so that attaching a server later is one function.
  *
- * The moment access needs to actually be restricted, verifyInvite() has to call
- * a server that holds the codes, and the app has to stop working when that call
- * fails. Until then, treat the app as public.
+ * The real gate is functions/_middleware.js, which runs on Cloudflare Pages
+ * before any file is served and answers an unauthenticated request with a login
+ * page instead of the app. That one holds, because it decides what leaves the
+ * server; this one only decides what an already-delivered page chooses to show.
+ * Deployed behind that middleware, this file is convenience only -- keep it for
+ * `python3 -m http.server` during development, and do not mistake it for
+ * protection. Until the site is deployed there, treat the app as public.
  *
  * Codes are stored as hashes rather than plaintext. That is not security either
  * -- a hash of a short code is brute-forced instantly -- but it stops a code
