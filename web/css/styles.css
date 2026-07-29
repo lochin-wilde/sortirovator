@@ -19,8 +19,8 @@
  * Browsers implement [hidden] as `display: none` at the lowest precedence, so
  * any later `display: flex` or `display: grid` on the same element silently
  * defeats it — the DOM says hidden, the pixels say otherwise. Five elements
- * here had that shape, including the invite gate, which could be dismissed in
- * code but never disappeared from the screen.
+ * here had that shape, including the since-removed invite gate, which could be
+ * dismissed in code but never disappeared from the screen.
  */
 [hidden] {
   display: none !important;
@@ -464,57 +464,6 @@ th.sortable.sorted::after {
 
 th.sortable.sorted.descending::after {
   content: "▼";
-}
-
-/* ------------------------------------------------------------------ */
-/* Invite gate                                                          */
-/* ------------------------------------------------------------------ */
-
-.invite-gate {
-  position: fixed;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  background: var(--bg, #0d1016);
-  z-index: 50;
-  padding: 1rem;
-}
-
-.invite-card {
-  max-width: 30rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 1.5rem;
-  background: var(--panel, #161a22);
-}
-
-.invite-row {
-  display: flex;
-  gap: 0.5rem;
-  margin: 0.75rem 0 0.5rem;
-}
-
-#invite-code {
-  flex: 1 1 auto;
-  font: inherit;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 0.5rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg, #0d1016);
-  color: inherit;
-}
-
-.invite-error {
-  color: #ff6b6b;
-  font-size: 0.85rem;
-  margin: 0.25rem 0;
-}
-
-.invite-note {
-  margin-top: 1rem;
-  opacity: 0.7;
 }
 
 .masthead-controls {
