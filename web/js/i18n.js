@@ -13,13 +13,6 @@
 
 const TRANSLATIONS = {
   en: {
-    "invite.title": "Closed testing",
-    "invite.intro": "Музыкальный сортир is in closed testing. Enter the code you were given.",
-    "invite.placeholder": "Invite code",
-    "invite.submit": "Continue",
-    "invite.wrong": "That code is not recognised.",
-    "invite.signout": "Sign out",
-    "invite.note": "This check runs in your browser and is not a security measure — it keeps the test group deliberate, nothing more.",
     "app.tagline": "Sorts, renames and normalizes your library in the browser. Your audio stays here \u2014 only track names go out, to look them up in the music databases.",
     "lang.label": "Language",
 
@@ -158,13 +151,6 @@ const TRANSLATIONS = {
   },
 
   ru: {
-    "invite.title": "Закрытое тестирование",
-    "invite.intro": "«Музыкальный сортир» пока в закрытом тесте. Введите выданный вам код.",
-    "invite.placeholder": "Код приглашения",
-    "invite.submit": "Продолжить",
-    "invite.wrong": "Такой код не подходит.",
-    "invite.signout": "Выйти",
-    "invite.note": "Проверка выполняется в браузере и не является защитой — она лишь делает круг тестировщиков осознанным.",
     "app.tagline": "Сортирует, переименовывает и выравнивает громкость прямо в браузере. Музыка никуда не уходит \u2014 наружу отправляются только названия треков, чтобы найти их в музыкальных базах.",
     "lang.label": "Язык",
 
