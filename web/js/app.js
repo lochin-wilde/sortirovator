@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.10";
+const APP_VERSION = "2026.07.29.9";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -91,6 +91,11 @@ const ui = {
   cancel: el("cancel"),
   download: el("download"),
   reset: el("reset"),
+  inviteGate: el("invite-gate"),
+  inviteSignout: el("invite-signout"),
+  inviteCode: el("invite-code"),
+  inviteSubmit: el("invite-submit"),
+  inviteError: el("invite-error"),
   appMain: el("app-main"),
   tableTools: el("table-tools"),
   tableFilter: el("table-filter"),
@@ -517,17 +522,7 @@ async function resolveGenre(context) {
         ? await discogsGenre(artist, track, genresMap)
         : null;
       if (fromDiscogs) {
-        /*
-         * The one place a release year changes the answer. Only Discogs carries
-         * a usable date, so the era split happens here and nowhere else -- a
-         * track that Discogs cannot date stays in the undivided Hip-Hop folder
-         * rather than being guessed into an era.
-         */
-        const withEra = applyEra(fromDiscogs.genre, fromDiscogs.year);
-        const source = withEra !== fromDiscogs.genre
-          ? 'Discogs style "' + fromDiscogs.tag + '", released ' + fromDiscogs.year
-          : 'Discogs style "' + fromDiscogs.tag + '"';
-        return { genre: withEra, source };
+        return { genre: fromDiscogs.genre, source: 'Discogs style "' + fromDiscogs.tag + '"' };
       }
       if (options.useMusicbrainz) {
         const fromRecording = await musicbrainzGenre(artist, track, genresMap, recordingId);
@@ -1392,5 +1387,50 @@ ui.feedbackClear.addEventListener("click", () => {
   log(t("feedback.cleared"));
 });
 
+/*
+ * The gate hides the interface but does not disable anything behind it: with no
+ * server there is nothing to enforce, and pretending otherwise in the code
+ * would be worse than being plain about it. See js/invite.js.
+ */
+async function initInviteGate() {
+  if (await hasValidInvite()) {
+    ui.inviteGate.hidden = true;
+    return;
+  }
+  ui.inviteGate.hidden = false;
+
+  const attempt = async () => {
+    const code = ui.inviteCode.value;
+    const result = await verifyInvite(code);
+    if (!result.ok) {
+      ui.inviteError.hidden = false;
+      ui.inviteCode.focus();
+      ui.inviteCode.select();
+      return;
+    }
+    rememberInvite(code);
+    ui.inviteError.hidden = true;
+    ui.inviteGate.hidden = true;
+  };
+
+  ui.inviteSubmit.addEventListener("click", attempt);
+  ui.inviteCode.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") attempt();
+  });
+  ui.inviteCode.addEventListener("input", () => { ui.inviteError.hidden = true; });
+  ui.inviteCode.focus();
+}
+
+/*
+ * Signing out exists for the closed test: whoever hands out codes needs to see
+ * the gate again without clearing site data by hand. It forgets the invite
+ * only -- language and genre corrections are the user's, not the tester's.
+ */
+ui.inviteSignout.addEventListener("click", () => {
+  forgetInvite();
+  location.reload();
+});
+
 initLanguage();
+initInviteGate();
 probeEnvironment();

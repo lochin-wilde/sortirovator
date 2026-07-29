@@ -38,22 +38,26 @@ own URL.
 A content hash would remove the manual step, but that needs a build, and this
 project deliberately has none.
 
-## Access
+## Invite gate
 
-Open to everyone. The closed-testing gate was removed once the app was made
-public: `js/invite.js`, the code prompt in `index.html`, and the Cloudflare
-Pages middleware in `functions/_middleware.js` are all gone.
+`js/invite.js` shows a code prompt before the interface during closed testing.
+Codes are stored as FNV-1a hashes and the check is case-insensitive; a valid
+code is remembered in `localStorage`.
 
-Anyone restoring a gate should know why the removed one was built the way it
-was. The client-side half was never access control — it ran in the visitor's
-browser, after the browser had already been handed every file, so the codes
-shipped in the page and the console defeated it in seconds. The middleware was
-the half that held, because it decided what left the server, and it failed
-closed: missing `SESSION_SECRET` or `INVITE_CODES` produced a 503 rather than
-an open site. Both properties are worth keeping if a gate ever comes back.
+**This is not access control.** Everything runs in the browser, so the hashes
+ship in the page and the gate is bypassed from the console in seconds. Hashing
+only stops a code being read at a glance — a short code is brute-forced
+instantly. The gate exists so the test group arrives deliberately rather than
+by accident, and so the flow and storage are in place.
 
-Nothing about the app assumes a gate. There is no server, no account and no
-stored user data beyond the visitor's own `localStorage`.
+Making it real requires two changes, and the second is the one that is easy to
+forget: `verifyInvite()` must ask a server that holds the codes, **and the app
+must refuse to work when that call fails**. A client that falls back to
+"allow" on a network error is the same as having no gate. Until both are done,
+treat the deployment as public.
+
+Test codes currently in the file: `SORTIR-2026`, `DJ-TEST-01`, `DJ-TEST-02`,
+`DJ-TEST-03`. Add more with `inviteHash("NEW-CODE")`.
 
 ## Interface language
 
