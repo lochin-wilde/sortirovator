@@ -45,3 +45,7 @@ ground-truth/
 .idea/
 .vscode/
 *.swp
+
+# Локальные значения секретов гейта — задаются в Cloudflare, не здесь.
+.dev.vars
+wrangler.toml.local
