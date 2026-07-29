@@ -56,9 +56,10 @@ const TRANSLATIONS = {
 
     "lookups.legend": "Online lookups",
     "lookups.musicbrainz": "Use MusicBrainz (genre tags and name fixing)",
+    "lookups.discogs": "Use Discogs (the most precise genre source)",
     "lookups.lastfm": "Last.fm API key (optional)",
     "lookups.lastfmPlaceholder": "Leave empty to skip Last.fm",
-    "lookups.hint": "MusicBrainz allows one request per second, so large batches with lookups enabled take a while. Turn lookups off to run fully offline on audio analysis alone.",
+    "lookups.hint": "Only the artist and title are sent, never the audio. MusicBrainz allows one request per second and Discogs 25 per minute, so large batches with lookups enabled take a while. Turn both off to run fully offline on audio analysis alone.",
 
     "step3.title": "Run",
     "step3.start": "Start analysis",
@@ -99,6 +100,8 @@ const TRANSLATIONS = {
     "summary.skippedType": "{count} skipped (unsupported format)",
     "summary.skippedSize": "{count} skipped (larger than {limit} MB)",
     "summary.more": "and {count} more",
+    "msg.zipUnavailable": "Could not load the archive library. Check the connection and try again.",
+    "msg.zipUnavailable": "Не удалось загрузить библиотеку архивации. Проверьте соединение и попробуйте снова.",
     "msg.tooBig": "Skipped {name} — {size} MB, over the {limit} MB limit. Decoding expands audio, so a file this size can exhaust the tab's memory and lose the whole batch.",
     "msg.selected": "Selected {count} supported files, skipped {skipped}.",
     "msg.workerError": "Worker error: {message}",
@@ -198,9 +201,10 @@ const TRANSLATIONS = {
 
     "lookups.legend": "Поиск в интернете",
     "lookups.musicbrainz": "Использовать MusicBrainz (жанры и исправление названий)",
+    "lookups.discogs": "Использовать Discogs (самый точный источник жанров)",
     "lookups.lastfm": "Ключ Last.fm API (необязательно)",
     "lookups.lastfmPlaceholder": "Оставьте пустым, чтобы не обращаться к Last.fm",
-    "lookups.hint": "MusicBrainz разрешает один запрос в секунду, поэтому большие пачки с поиском идут долго. Отключите поиск, чтобы работать полностью офлайн — только по анализу звука.",
+    "lookups.hint": "Наружу уходят только исполнитель и название, звук — никогда. MusicBrainz разрешает один запрос в секунду, Discogs — 25 в минуту, поэтому большие пачки с поиском идут долго. Отключите оба, чтобы работать полностью офлайн — только по анализу звука.",
 
     "step3.title": "Запуск",
     "step3.start": "Начать анализ",
@@ -241,6 +245,7 @@ const TRANSLATIONS = {
     "summary.skippedType": "пропущено {count} (неподдерживаемый формат)",
     "summary.skippedSize": "пропущено {count} (больше {limit} МБ)",
     "summary.more": "и ещё {count}",
+    "msg.zipUnavailable": "Не удалось загрузить библиотеку архивации. Проверьте соединение и попробуйте снова.",
     "msg.tooBig": "Пропущен {name} — {size} МБ при пределе {limit} МБ. При декодировании звук занимает больше, чем на диске, и такой файл может исчерпать память вкладки, потеряв всю партию.",
     "msg.selected": "Выбрано подходящих файлов: {count}, пропущено: {skipped}.",
     "msg.workerError": "Ошибка воркера: {message}",

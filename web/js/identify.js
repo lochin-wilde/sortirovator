@@ -284,6 +284,10 @@ const NON_GENRE_TAGS = new Set([
   "scottish", "irish", "australian", "canadian", "brazilian", "usa", "uk", "us",
   "50s", "60s", "70s", "80s", "90s", "00s", "10s", "20s",
   "1980s", "1990s", "2000s", "2010s", "2020s",
+  // Discogs "styles" that describe a performance rather than a genre. Discogs
+  // files these alongside real styles, so they arrive looking authoritative.
+  "ballad", "instrumental", "acoustic", "a cappella", "spoken word",
+  "leftfield", "experimental", "novelty", "remix", "edit", "dj mix",
 ]);
 
 function isNonGenreTag(tag) {
@@ -367,11 +371,12 @@ function firstMappedGenre(tags, genresMap, preferSpecific) {
     if (!genre) continue;
     if (!preferSpecific) return { genre, tag };
 
-    seen.push({ genre, tag, weight });
+    const entry = { genre, tag, weight };
+    seen.push(entry);
     if (GENERIC_CATEGORIES.has(genre)) {
-      if (!generic) generic = { genre, tag };
+      if (!generic) generic = entry;
     } else if (!best) {
-      best = { genre, tag, weight };
+      best = entry;
     }
   }
 
@@ -387,12 +392,23 @@ function firstMappedGenre(tags, genresMap, preferSpecific) {
    * Where no weights exist (MusicBrainz returns bare tags, curated and few) any
    * subgenre is taken at face value.
    */
-  const child = seen.find((s) => {
-    if (GENRE_PARENTS[s.genre] !== best.genre) return false;
-    if (!isFinite(s.weight) || !isFinite(best.weight) || best.weight <= 0) return true;
-    return s.weight / best.weight >= CHILD_MIN_VOTE_SHARE;
-  });
-  return child ? { genre: child.genre, tag: child.tag } : { genre: best.genre, tag: best.tag };
+  /*
+   * The challenger is the best-supported real genre after the winner -- not any
+   * subgenre found anywhere in the list. Without that restriction a stray tag
+   * outranks a well-supported one: Disclosure's "Latch" carries House 1.95,
+   * UK Garage 1.45 and Deep House 0.5 across its Discogs releases, and letting
+   * Deep House through on the strength of being House's child would put the
+   * weakest reading ahead of one with three times its support.
+   */
+  const challenger = seen.find((s) => s !== best && !GENERIC_CATEGORIES.has(s.genre));
+  if (!challenger || GENRE_PARENTS[challenger.genre] !== best.genre) {
+    return { genre: best.genre, tag: best.tag };
+  }
+  if (isFinite(challenger.weight) && isFinite(best.weight) && best.weight > 0 &&
+      challenger.weight / best.weight < CHILD_MIN_VOTE_SHARE) {
+    return { genre: best.genre, tag: best.tag };
+  }
+  return { genre: challenger.genre, tag: challenger.tag };
 }
 
 const MUSICBRAINZ_BASE = "https://musicbrainz.org/ws/2";
@@ -441,7 +457,19 @@ function splitTitle(title) {
     removed.push("(" + tail.replace(/^\s*[-–—]\s*/, "").trim() + ")");
     return " ";
   });
-  text = text.replace(/\s*\b(feat\.?|ft\.?|featuring|with)\b.*$/i, (tail) => {
+  /*
+   * A bracketed "(with Someone)" is a credit and comes out. Bare "with" does
+   * not, and used to: it is an ordinary English word that titles are full of,
+   * and treating it as a credit marker truncated them. "I Wanna Dance With
+   * Somebody" became "I Wanna Dance" -- which is then what gets searched, and
+   * what the file is renamed to. "Dancing With Myself" and "With Or Without
+   * You" would go the same way. The brackets are what make the difference.
+   */
+  text = text.replace(/\s*[([]\s*with\b[^)\]]*[)\]]/gi, (group) => {
+    removed.push("(" + group.replace(/^[\s([]+|[)\]\s]+$/g, "").trim() + ")");
+    return " ";
+  });
+  text = text.replace(/\s*\b(feat\.?|ft\.?|featuring)\b.*$/i, (tail) => {
     // The tail may already carry its own brackets, as in "... (ft Someone)"
     // where only the opening bracket was consumed above.
     const trimmed = tail.trim().replace(/^[([]/, "").replace(/[)\]]$/, "").trim();
@@ -523,21 +551,33 @@ function mergeTitleVersion(originalTitle, matchedTitle) {
   return (matched.core + " " + original.version).trim();
 }
 
-// MusicBrainz asks for at most one request per second. Everything funnels
-// through this queue so the whole batch respects it.
-let _lastRequestAt = 0;
-let _requestChain = Promise.resolve();
-
-function rateLimited(task) {
-  const run = async () => {
-    const wait = Math.max(0, 1000 - (Date.now() - _lastRequestAt));
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-    _lastRequestAt = Date.now();
-    return task();
+/*
+ * One queue per service, because their limits differ by more than a factor of
+ * two and a shared queue would have to run at the slowest one. MusicBrainz asks
+ * for at most one request per second; Discogs allows 25 a minute to an
+ * unauthenticated client, which is 2.4 seconds apart.
+ *
+ * Files are processed in parallel across workers, so without a queue a batch
+ * fires as many simultaneous requests as there are workers and gets throttled or
+ * banned. Every call funnels through here.
+ */
+function makeRateLimiter(minIntervalMs) {
+  let lastAt = 0;
+  let chain = Promise.resolve();
+  return function limited(task) {
+    const run = async () => {
+      const wait = Math.max(0, minIntervalMs - (Date.now() - lastAt));
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      lastAt = Date.now();
+      return task();
+    };
+    chain = chain.then(run, run);
+    return chain;
   };
-  _requestChain = _requestChain.then(run, run);
-  return _requestChain;
 }
+
+const rateLimited = makeRateLimiter(1000);        // MusicBrainz
+const discogsRateLimited = makeRateLimiter(2500); // Discogs, 25/min
 
 /*
  * MusicBrainz answers 503 whenever its rate limiter thinks a client is going
@@ -775,6 +815,124 @@ async function musicbrainzGenre(artist, track, genresMap, recordingId) {
  * answer, it is the absence of one.
  */
 const GENERIC_CATEGORIES = new Set(["Pop", "Rock", "Electronic", "Unknown"]);
+
+/* ------------------------------------------------------------------ */
+/* Discogs                                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Discogs, the most useful genre source found for this job.
+ *
+ * Its "style" field is written by record collectors about individual releases,
+ * which is exactly the granularity a DJ sorts by. Measured against the others:
+ * Fisher's "Losing It" comes back Tech House, Disclosure's "Latch" UK Garage,
+ * Wu-Tang's "C.R.E.A.M." Boom Bap -- where Last.fm's artist tags could only
+ * manage House, UK Garage and Hip-Hop, and Last.fm's track tags are empty.
+ *
+ * No API key, and it answers cross-origin requests, so it works from the
+ * browser as-is. The cost is the rate limit: 25 requests a minute for an
+ * unauthenticated client, against MusicBrainz's 60.
+ *
+ * Two things matter for precision:
+ *
+ *   Search by field, not by one string. A free-text search for "Black Coffee
+ *   Drive" returns a rock record called "Drive"; artist= plus track= does not.
+ *
+ *   Verify the artist that comes back. Even field search returns something
+ *   when nothing matches -- the same query answered "CoffeeBlack & WTM Scoob -
+ *   Love At First Sight" -- and an unchecked answer is worse than no answer,
+ *   because it is confidently wrong.
+ */
+const DISCOGS_SEARCH = "https://api.discogs.com/database/search";
+const DISCOGS_MAX_RESULTS = 5;
+const _discogsCache = new Map();
+
+/*
+ * Discogs titles read "Artist - Release", and repeated artist names carry a
+ * disambiguating number: "Fisher (16) - Losing It".
+ */
+function discogsArtistOf(title) {
+  const text = String(title || "");
+  const cut = text.indexOf(" - ");
+  const artistPart = cut > 0 ? text.slice(0, cut) : text;
+  return artistPart.replace(/\s*\(\d+\)\s*$/, "").trim();
+}
+
+async function discogsGenre(artist, track, genresMap) {
+  if (!artist || !track) return null;
+  const cacheKey = (artist + " " + track).toLowerCase();
+  if (_discogsCache.has(cacheKey)) return _discogsCache.get(cacheKey);
+
+  let answer = null;
+  try {
+    /*
+     * Field search first, because it is far more precise: a free-text search for
+     * "Black Coffee Drive" answers with a rock record called "Drive".
+     *
+     * It also returns nothing at all for some tracks that free text does find --
+     * Wu-Tang's "C.R.E.A.M." among them -- so free text is kept as a fallback.
+     * The artist check below applies either way, which is what makes the looser
+     * query safe to use.
+     */
+    const base = DISCOGS_SEARCH + "?type=release&per_page=" + DISCOGS_MAX_RESULTS;
+    const byField = base +
+      "&artist=" + encodeURIComponent(artist) +
+      "&track=" + encodeURIComponent(track);
+    let data = await discogsRateLimited(() => fetchJson(byField));
+    if (!(data.results || []).length) {
+      const byText = base + "&q=" + encodeURIComponent(artist + " " + track);
+      data = await discogsRateLimited(() => fetchJson(byText));
+    }
+
+    /*
+     * Styles are counted across the matching releases rather than taken from
+     * the first. A track appears on a single and again on an album, and the
+     * pressings do not always agree; the reading they share is the safer one.
+     * Netsky's "Rio" is listed House+Drum n Bass on one and Drum n Bass on the
+     * next, and Drum n Bass is the answer.
+     */
+    const votes = new Map();
+    let rank = 0;
+    for (const result of (data.results || [])) {
+      if (textSimilarity(artist, discogsArtistOf(result.title)) < IDENTIFY_MIN_ARTIST_SIMILARITY) {
+        continue;
+      }
+      /*
+       * Earlier results count for more. Discogs orders by how well the release
+       * matched, and the first hit is usually the single, which is about this
+       * track; the ones behind it are albums that merely contain it and are
+       * tagged for the whole record. Kaytranada's "10%" is the case in point --
+       * the single is House, the album "Bubba" is R&B and Hip Hop and House.
+       */
+      const weight = 1 / (1 + rank);
+      rank++;
+
+      /*
+       * Deduplicated per release. Discogs lists a name in both `style` and
+       * `genre` for the same record, and counting it twice was enough to put
+       * Hip Hop above House on that Kaytranada album by 8 votes to 5.
+       */
+      const seenHere = new Set();
+      for (const name of [].concat(result.style || [], result.genre || [])) {
+        const tag = String(name || "").toLowerCase().trim();
+        if (!tag || seenHere.has(tag)) continue;
+        seenHere.add(tag);
+        votes.set(tag, (votes.get(tag) || 0) + weight);
+      }
+    }
+
+    const ranked = Array.from(votes.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ name, count }));
+    answer = firstMappedGenre(ranked, genresMap, true);
+  } catch (e) {
+    lastLookupError = "Discogs lookup failed: " + e.message;
+    answer = null;
+  }
+
+  _discogsCache.set(cacheKey, answer);
+  return answer;
+}
 
 /*
  * Artist-level genre, preferring a specific category over an umbrella one.
