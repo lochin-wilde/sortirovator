@@ -40,24 +40,29 @@ project deliberately has none.
 
 ## Invite gate
 
-`js/invite.js` shows a code prompt before the interface during closed testing.
-Codes are stored as FNV-1a hashes and the check is case-insensitive; a valid
-code is remembered in `localStorage`.
+There is exactly one gate, `functions/_middleware.js`, and it runs on Cloudflare
+Pages before any file is served. An unauthenticated request is answered with a
+login page instead of the app, so a visitor without a code never receives
+`js/*`, the genre map, or anything else. Codes live in the project's environment
+variables and are never in the repository. Deployment, revocation and code
+length are documented in the file's own header.
 
-**This is not access control.** Everything runs in the browser, so the hashes
-ship in the page and the gate is bypassed from the console in seconds. Hashing
-only stops a code being read at a glance — a short code is brute-forced
-instantly. The gate exists so the test group arrives deliberately rather than
-by accident, and so the flow and storage are in place.
+**Nothing in `web/` checks a code, and nothing should.** A second gate written
+in client-side JavaScript used to sit here and was removed, because it broke the
+thing it looked like it was protecting: a tester who had cleared the middleware
+with their individual code then met a second prompt whose list of codes — being
+served to every visitor — could not contain that code. They were stopped by the
+decorative gate after passing the real one.
 
-Making it real requires two changes, and the second is the one that is easy to
-forget: `verifyInvite()` must ask a server that holds the codes, **and the app
-must refuse to work when that call fails**. A client that falls back to
-"allow" on a network error is the same as having no gate. Until both are done,
-treat the deployment as public.
+The general rule, which is worth keeping in mind before adding any check to this
+directory: code shipped to the browser cannot keep a secret, so a check that
+runs there can only ever be a suggestion. It also could not be reconciled with
+individual codes without publishing them.
 
-Test codes currently in the file: `SORTIR-2026`, `DJ-TEST-01`, `DJ-TEST-02`,
-`DJ-TEST-03`. Add more with `inviteHash("NEW-CODE")`.
+Serving `web/` from a static host with no middleware — GitHub Pages, Netlify
+without functions, `python3 -m http.server` — therefore means no gate at all.
+That is the correct behaviour for local development and the wrong deployment for
+a closed test.
 
 ## Interface language
 

@@ -74,7 +74,7 @@ Edit `genres_map.json` to customize genre mappings.
 ## Example Output Structure
 
 ```
-/Users/lochin-wilde/Downloads/SortedMusic/
+~/Downloads/SortedMusic/
 ├── Hip-Hop/
 │   ├── artist1 - track1.mp3
 │   └── artist2 - track2.mp3
