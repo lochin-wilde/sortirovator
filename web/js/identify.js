@@ -291,20 +291,90 @@ function isNonGenreTag(tag) {
   return text.length === 0 || NON_GENRE_TAGS.has(text);
 }
 
-// Single place every tag list is resolved through, so the blocklist cannot be
-// bypassed by one call site forgetting it.
+/*
+ * Which shelf each crate belongs on. Only used to let a subgenre outrank the
+ * parent it sits under -- nothing else in the app cares about the hierarchy.
+ */
+/*
+ * How much support a subgenre tag needs, relative to the parent it is trying to
+ * displace, before it is believed. Set from the measured gap between real
+ * signals (0.13-0.32 of the parent) and stray ones (0.01).
+ */
+const CHILD_MIN_VOTE_SHARE = 0.10;
+
+const GENRE_PARENTS = {
+  "Afro House": "House", "Amapiano": "House", "Tech House": "House",
+  "Deep House": "House", "Bass House": "House", "Funky / Disco House": "House",
+  "Melodic House": "House", "Progressive House": "House",
+  "Future / Slap House": "House", "Electro / Big Room": "House",
+  "Latin House": "House", "Ghetto House / Juke": "House",
+  "Hard Techno": "Techno", "Melodic Techno": "Techno",
+  "Minimal / Deep Tech": "Techno",
+  "Psytrance": "Trance",
+  "Liquid DnB": "Drum & Bass", "Neurofunk": "Drum & Bass", "Jungle": "Drum & Bass",
+  "Riddim": "Dubstep", "Future Bass": "Dubstep",
+  "Boom Bap": "Hip-Hop", "Trap": "Hip-Hop", "Drill": "Hip-Hop", "Phonk": "Hip-Hop",
+};
+
+/*
+ * Single place every tag list is resolved through, so the blocklist cannot be
+ * bypassed by one call site forgetting it.
+ *
+ * With preferSpecific, the rule is: take the most-voted genre tag, except that a
+ * subgenre of it beats it. Last.fm orders tags by votes, and that order carries
+ * real signal -- "dubstep" at the top of Skrillex is the right answer, while
+ * "breakcore" further down is noise.
+ *
+ * Simply skipping every broad category was tried and is worse. It sent Skrillex
+ * to Hardcore via "breakcore", Sub Focus to Breakbeat past "drum and bass", and
+ * Black Coffee to Jazz because "jazz" happened to be listed before "deep house".
+ * A minority tag is not more informative than a majority one merely by being
+ * narrower; it is only more informative when it narrows the same answer.
+ *
+ * Generic categories are the exception: Pop, Rock and Electronic are so broad
+ * that any real genre tag anywhere in the list beats them.
+ */
 function firstMappedGenre(tags, genresMap, preferSpecific) {
-  let fallback = null;
+  let best = null;         // most-voted genre that is not merely generic
+  let generic = null;      // Pop / Rock / Electronic, last resort
+  const seen = [];
+
   for (const raw of tags) {
-    const tag = String(raw || "").toLowerCase().trim().replace(/^#/, "");
+    // Last.fm supplies a vote weight per tag; MusicBrainz supplies bare strings.
+    const name = raw && typeof raw === "object" ? raw.name : raw;
+    const weight = raw && typeof raw === "object" ? Number(raw.count) : NaN;
+    const tag = String(name || "").toLowerCase().trim().replace(/^#/, "");
     if (isNonGenreTag(tag)) continue;
     const genre = genresMap[tag];
     if (!genre) continue;
     if (!preferSpecific) return { genre, tag };
-    if (!UMBRELLA_CATEGORIES.has(genre)) return { genre, tag };
-    if (!fallback) fallback = { genre, tag };
+
+    seen.push({ genre, tag, weight });
+    if (GENERIC_CATEGORIES.has(genre)) {
+      if (!generic) generic = { genre, tag };
+    } else if (!best) {
+      best = { genre, tag, weight };
+    }
   }
-  return fallback;
+
+  if (!best) return generic;
+
+  /*
+   * A subgenre of the winner outranks it -- but only if enough people actually
+   * said so. Sub Focus carries "jungle" at a weight of 1 against "drum and bass"
+   * at 100; one vote in a hundred is somebody's stray opinion, not a
+   * reclassification. Black Coffee's "deep house" at 18 against "house" at 100,
+   * and Fisher's "tech house" at 13 against "house" at 41, are real signals.
+   *
+   * Where no weights exist (MusicBrainz returns bare tags, curated and few) any
+   * subgenre is taken at face value.
+   */
+  const child = seen.find((s) => {
+    if (GENRE_PARENTS[s.genre] !== best.genre) return false;
+    if (!isFinite(s.weight) || !isFinite(best.weight) || best.weight <= 0) return true;
+    return s.weight / best.weight >= CHILD_MIN_VOTE_SHARE;
+  });
+  return child ? { genre: child.genre, tag: child.tag } : { genre: best.genre, tag: best.tag };
 }
 
 const MUSICBRAINZ_BASE = "https://musicbrainz.org/ws/2";
@@ -659,11 +729,21 @@ async function musicbrainzGenre(artist, track, genresMap, recordingId) {
   }
   if (!id) return null;
   const tags = await musicbrainzRecordingTags(id);
-  return firstMappedGenre(tags, genresMap, false);
+  // Specific over broad, for the same reason as the Last.fm track lookup: a
+  // recording carrying both "house" and "tech house" is a tech house record.
+  return firstMappedGenre(tags, genresMap, true);
 }
 
-// Categories broad enough that landing in one tells a DJ almost nothing.
-const UMBRELLA_CATEGORIES = new Set(["Pop", "Rock", "Electronic", "Unknown"]);
+/*
+ * Categories so broad that landing in one tells a DJ nothing at all. Any real
+ * genre tag anywhere in the list beats these.
+ *
+ * Note this is not the same idea as GENRE_PARENTS. "House" is broad, but it is
+ * a useful answer and a defensible folder; if the only thing the sources agree
+ * on is house, House is the honest result. "Pop" on a dance record is not an
+ * answer, it is the absence of one.
+ */
+const GENERIC_CATEGORIES = new Set(["Pop", "Rock", "Electronic", "Unknown"]);
 
 /*
  * Artist-level genre, preferring a specific category over an umbrella one.
@@ -698,7 +778,12 @@ async function lastfmArtistGenre(artist, apiKey, genresMap) {
       "&autocorrect=1&api_key=" + encodeURIComponent(apiKey) + "&format=json";
     try {
       const data = await fetchJson(url);
-      names = (((data.toptags || {}).tag) || []).map((t) => String(t.name || "").toLowerCase());
+      // Weights are kept, not just names: firstMappedGenre needs them to tell a
+      // real subgenre from one person's stray tag.
+      names = (((data.toptags || {}).tag) || []).map((t) => ({
+        name: String(t.name || "").toLowerCase(),
+        count: Number(t.count),
+      }));
     } catch (e) {
       lastLookupError = "Last.fm artist lookup failed: " + e.message;
       names = [];
@@ -717,8 +802,20 @@ async function lastfmGenre(artist, track, apiKey, genresMap) {
     "&autocorrect=1&api_key=" + encodeURIComponent(apiKey) + "&format=json";
   try {
     const data = await fetchJson(url);
-    const tags = (((data.track || {}).toptags || {}).tag || []).map((t) => String(t.name || ""));
-    const found = firstMappedGenre(tags, genresMap, false);
+    const tags = (((data.track || {}).toptags || {}).tag || []).map((t) => ({
+      name: String(t.name || ""),
+      count: Number(t.count),
+    }));
+    /*
+     * A subgenre beats the shelf it sits on, when enough people say so. On an
+     * Afro House record the bare "house" usually outvotes "afro house" -- more
+     * people know the shelf than the crate -- and the crate is what we came for.
+     *
+     * Note that track.getInfo now returns an empty tag list for most tracks;
+     * this stage rarely answers at all, and the artist lookup below carries the
+     * genre work in practice.
+     */
+    const found = firstMappedGenre(tags, genresMap, true);
     if (found) return found;
   } catch (e) {
     return null;
