@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.13";
+const APP_VERSION = "2026.07.29.14";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -1418,3 +1418,11 @@ if (versionBadge) versionBadge.textContent = "v" + APP_VERSION;
 
 initLanguage();
 probeEnvironment();
+
+/*
+ * Corrections that never reached the server -- made offline, or during the
+ * period before /api/feedback existed -- go out now. Deliberately after the
+ * interface is up: this is the least urgent thing the page does, and it must
+ * never be the reason the app is slow to become usable.
+ */
+flushFeedback();

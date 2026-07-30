@@ -14,7 +14,17 @@ const req = (method, opts = {}) => new Request("https://example.com/", {
   body: opts.code !== undefined ? new URLSearchParams({ code: opts.code }) : undefined,
 });
 
-const run = (r, e = env) => mod.onRequest({ request: r, env: e, next });
+/*
+ * `data` is the object Cloudflare passes from middleware to the routes behind
+ * it, and the real runtime always supplies one. It is created per request here
+ * for the same reason, and kept so a test can read what the middleware put in
+ * it -- which is how the invite label reaches /api/feedback.
+ */
+let lastData = null;
+const run = (r, e = env) => {
+  lastData = {};
+  return mod.onRequest({ request: r, env: e, next, data: lastData });
+};
 const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
@@ -39,6 +49,12 @@ const token = setCookie.split(";")[0].split("=").slice(1).join("=");
 // 4. С валидной кукой приложение отдаётся
 r = await run(req("GET", { cookie: "sortir_session=" + token }));
 check("валидная сессия -> приложение отдано", served === 1 && (await r.text()) === "ПРИЛОЖЕНИЕ");
+check("метка сессии передана дальше", lastData.invite === "tester-one");
+
+// 4a. Отклонённая сессия не оставляет метку: иначе маршрут за гейтом принял бы
+//     её за подтверждённую и записал бы исправление от чужого имени.
+r = await run(req("GET", { cookie: "sortir_session=" + token.slice(0, -4) + "ZZZZ" }));
+check("отклонённая сессия метку не оставляет", lastData.invite === undefined);
 
 // 5. Подделка подписи
 const tampered = token.slice(0, -4) + "AAAA";
