@@ -36,6 +36,8 @@
 
 const COOKIE_NAME = "sortir_session";
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+// Must match the form action in web/index.html.
+const LOGOUT_PATH = "/logout";
 
 const encoder = new TextEncoder();
 
@@ -158,6 +160,31 @@ export async function onRequest(context) {
   if (!secret || !rawCodes) {
     return htmlResponse(
       "<p>Гейт не настроен: не заданы SESSION_SECRET и INVITE_CODES.</p>", 503);
+  }
+
+  /*
+   * Signing out has to happen here, on the server. The session cookie is
+   * HttpOnly -- that is the point of it -- so no button on the page can clear
+   * it; only a Set-Cookie in a response can.
+   *
+   * POST rather than GET. With SameSite=Lax a cross-site *navigation* still
+   * carries the cookie, so a GET /logout could be triggered by any page that
+   * links to it and would sign the user out unasked. A cross-site POST does not
+   * carry it, so the same attempt simply fails.
+   *
+   * Handled before the session check, and without one: signing out must work
+   * whatever state the session is in, including already expired. Nothing here
+   * depends on who the caller is -- the worst a stranger can do is expire their
+   * own cookie.
+   */
+  if (new URL(request.url).pathname === LOGOUT_PATH) {
+    if (request.method !== "POST") {
+      return new Response(null, { status: 303, headers: { Location: "/" } });
+    }
+    const response = new Response(null, { status: 303, headers: { Location: "/" } });
+    response.headers.append("Set-Cookie",
+      `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
+    return response;
   }
 
   if (await sessionIsValid(secret, readCookie(request, COOKIE_NAME))) {

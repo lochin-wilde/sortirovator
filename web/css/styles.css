@@ -505,3 +505,10 @@ th.sortable.sorted.descending::after {
   font-variant-numeric: tabular-nums;
   user-select: all;
 }
+
+/* The sign-out form is only a wrapper for its button; it must not take part in
+   the masthead layout as a block of its own. */
+.signout-form {
+  display: inline;
+  margin: 0;
+}

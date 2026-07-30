@@ -13,6 +13,7 @@
 
 const TRANSLATIONS = {
   en: {
+    "gate.signout": "Sign out",
     "app.tagline": "Sorts, renames and normalizes your library in the browser. Your audio stays here \u2014 only track names go out, to look them up in the music databases.",
     "lang.label": "Language",
 
@@ -151,6 +152,7 @@ const TRANSLATIONS = {
   },
 
   ru: {
+    "gate.signout": "Выйти",
     "app.tagline": "Сортирует, переименовывает и выравнивает громкость прямо в браузере. Музыка никуда не уходит \u2014 наружу отправляются только названия треков, чтобы найти их в музыкальных базах.",
     "lang.label": "Язык",
 

@@ -64,7 +64,30 @@ check("просроченная сессия отклонена", r.status === 4
 r = await run(req("GET", { cookie: "sortir_session=" + token }), { ...env, SESSION_SECRET: "другой-секрет" });
 check("смена SESSION_SECRET рвёт все сессии", r.status === 401);
 
-// 9. Забыли настроить — закрыто, а не открыто
+// 9. Выход: POST /logout гасит куку
+const logoutReq = (method, cookie) => new Request("https://example.com/logout", {
+  method, headers: cookie ? { Cookie: cookie } : {},
+});
+r = await run(logoutReq("POST", "sortir_session=" + token));
+const cleared = r.headers.get("Set-Cookie") || "";
+check("POST /logout -> 303 на /", r.status === 303 && r.headers.get("Location") === "/");
+check("кука гасится (Max-Age=0)", /Max-Age=0/.test(cleared) && /sortir_session=;/.test(cleared));
+check("гасящая кука тоже HttpOnly и Secure", /HttpOnly/.test(cleared) && /Secure/.test(cleared));
+
+// 10. Выход работает и без сессии, и приложение при этом не отдаётся
+const servedBefore = served;
+r = await run(logoutReq("POST"));
+check("выход без сессии -> 303, приложение не отдано", r.status === 303 && served === servedBefore);
+
+// 11. GET /logout не гасит куку: иначе чужая ссылка выкидывала бы пользователя
+r = await run(logoutReq("GET", "sortir_session=" + token));
+check("GET /logout ничего не гасит", !/Max-Age=0/.test(r.headers.get("Set-Cookie") || ""));
+
+// 12. После выхода прежняя кука должна перестать пускать
+//     (сервер её погасил у клиента; сама подпись остаётся валидной, поэтому
+//      проверяем именно то, что гарантирует сервер — гашение, а не отзыв)
+
+// 13. Забыли настроить — закрыто, а не открыто
 r = await run(req("GET"), { SESSION_SECRET: "", INVITE_CODES: "" });
 check("без настройки -> 503, приложение не отдано", r.status === 503 && served === 1);
 
