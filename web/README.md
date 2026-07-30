@@ -372,20 +372,53 @@ a track; two say something about the artist. Plenty of artists genuinely span
 genres, so a single data point should not start overriding lookups for their
 whole catalogue.
 
-### Server hand-off
+### Sending them to the author
 
-Nothing is sent anywhere. `submitFeedback()` in `js/feedback.js` is a stub that
-logs what *would* be sent, so the payload shape is settled and exercised before
-a backend exists; swapping its body for a `fetch()` is the whole integration.
-The same records download as JSON from the **Export corrections** button, which
-doubles as a way to inspect the format.
+Corrections are POSTed to `/api/feedback`, which stores them in D1. They are
+also kept locally and applied locally, so the send is not what makes a
+correction work for the person who made it — it is what lets it reach the genre
+map and everybody else.
 
     { v: 1, at: ISO-8601, file, artist, title,
       detected, detectedSource, corrected, bpm, key }
 
-`detectedSource` is the interesting field for a server: it records *which* tag
-from *which* service produced the wrong answer, so aggregated corrections could
-eventually fix the genre map itself rather than only patching individual tracks.
+`detectedSource` is the field that makes the rest worth collecting: it records
+*which* tag from *which* service produced the wrong answer, so aggregated
+corrections can fix the genre map itself rather than only patching individual
+tracks. The same records still download as JSON from **Export corrections**.
+
+**Sending is best-effort, and deliberately so.** Every entry carries a `sent`
+flag that only an acknowledgement from the server clears; an interrupted request
+leaves it queued for the next correction or the next visit. A failure never
+raises a dialog, never throws, and never blocks a batch — a correction is made
+in the middle of reviewing a hundred results, and losing that review to a
+network error would cost far more than the correction is worth. The queue is
+therefore allowed to grow and drain later, and never retried in a loop.
+
+Entries stored before this endpoint existed have no `sent` flag and are treated
+as unsent, so corrections made during the closed test are not stranded.
+
+The tester is identified by the label on their invite code, which the middleware
+recovers from the verified session and passes down as `context.data.invite`. The
+endpoint never reads the cookie itself — a route that parses a session without
+checking its signature is how a label becomes forgeable.
+
+What is sent is stated plainly in the interface next to the corrections, because
+it leaves the machine: the track name, artist and title, the detected and
+corrected genre, and the measured BPM and key. Never the audio.
+
+### What it needs in Cloudflare
+
+Without a D1 binding the endpoint answers 503 and the app keeps corrections
+locally — the behaviour it had before the endpoint existed. Setting it up:
+
+1. **Storage & Databases → D1** → create a database.
+2. **Pages project → Settings → Bindings** → add a D1 binding named `DB`, for
+   Production *and* Preview.
+3. Run `db/schema.sql` in the D1 console.
+
+`tools/test_feedback.mjs` covers the endpoint and the queue without a network or
+a database.
 
 ## Filename cleanup
 

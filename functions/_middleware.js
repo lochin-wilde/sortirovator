@@ -71,18 +71,33 @@ async function issueSession(secret, label) {
   return `${payload}.${await hmac(secret, payload)}`;
 }
 
-async function sessionIsValid(secret, token) {
-  if (!token) return false;
+/*
+ * Returns the label the session was issued to, or null if the token is not
+ * valid. The label rather than a boolean, because routes behind this need to
+ * know *whose* session it is -- /api/feedback records which tester a correction
+ * came from -- and having them re-parse the cookie themselves would invite one
+ * of them to read the label without checking the signature first.
+ *
+ * A label is only ever returned after the signature has been verified, so a
+ * caller cannot accidentally trust an unverified one.
+ */
+async function sessionLabel(secret, token) {
+  if (!token) return null;
   const cut = token.lastIndexOf(".");
-  if (cut < 0) return false;
+  if (cut < 0) return null;
   const payload = token.slice(0, cut);
   const signature = token.slice(cut + 1);
 
   const expected = await hmac(secret, payload);
-  if (!equalsConstantTime(signature, expected)) return false;
+  if (!equalsConstantTime(signature, expected)) return null;
 
-  const expires = Number(payload.split(".")[0]);
-  return Number.isFinite(expires) && expires > Math.floor(Date.now() / 1000);
+  // issueSession() strips dots from the label, so the payload splits cleanly.
+  const [rawExpires, label] = payload.split(".");
+  const expires = Number(rawExpires);
+  if (!Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) {
+    return null;
+  }
+  return label || "";
 }
 
 function readCookie(request, name) {
@@ -187,7 +202,11 @@ export async function onRequest(context) {
     return response;
   }
 
-  if (await sessionIsValid(secret, readCookie(request, COOKIE_NAME))) {
+  const label = await sessionLabel(secret, readCookie(request, COOKIE_NAME));
+  if (label !== null) {
+    // Routes downstream read this instead of the cookie, so the signature check
+    // above is the only place a session is ever trusted.
+    context.data.invite = label;
     return next();
   }
 

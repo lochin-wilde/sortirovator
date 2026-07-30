@@ -14,15 +14,18 @@
  * artists genuinely span genres, so a single data point is not enough to start
  * overriding the lookups for everything they made.
  *
- * Corrections are kept in localStorage. Nothing is sent anywhere: submitFeedback
- * below is a stub that records what *would* be sent, so the payload shape is
- * settled now and a server can be attached later without touching the UI.
+ * Corrections are kept in localStorage and also sent to /api/feedback, which is
+ * how they reach the genre map rather than only the library of whoever made
+ * them. Sending is best-effort: see flushFeedback below.
  */
 
 const FEEDBACK_STORAGE_KEY = "sortirovator.genreFeedback";
 const FEEDBACK_FORMAT_VERSION = 1;
 // How many agreeing corrections make an artist-level rule.
 const ARTIST_RULE_THRESHOLD = 2;
+const FEEDBACK_ENDPOINT = "/api/feedback";
+// Matches MAX_ENTRIES in functions/api/feedback.js, which rejects more.
+const FEEDBACK_BATCH_LIMIT = 200;
 
 let feedbackEntries = null;
 
@@ -92,15 +95,70 @@ function recordGenreCorrection(result, correctedGenre) {
 }
 
 /*
- * Server hand-off point. Deliberately does nothing but leave a trace in the
- * developer log, so the flow is exercised and the payload is visible before any
- * backend exists. Replacing the body with a fetch() is the whole integration.
+ * Sends everything not yet acknowledged by the server, oldest first.
+ *
+ * Every correction carries a `sent` flag, and only an acknowledgement clears
+ * it. That makes an interrupted send harmless: the entry stays queued and goes
+ * out with the next one, or on the next visit. The alternative -- treating a
+ * dispatched request as delivered -- loses corrections silently on a dropped
+ * connection, which is the failure this is most likely to meet, since the app
+ * is used on laptops in places with unreliable wifi.
+ *
+ * Nothing here is allowed to interrupt a batch. A correction is made in the
+ * middle of reviewing results, and a failed request must not produce an error
+ * dialog, a thrown exception, or a lost correction -- the local copy is already
+ * saved and already being applied, so the send failing costs nothing today.
+ * Hence the catch that only logs, and hence no retry loop.
+ *
+ * Entries stored before this existed have no `sent` flag and are treated as
+ * unsent, so corrections made during the closed test are not stranded.
  */
+let _flushInFlight = null;
+
+function flushFeedback() {
+  if (_flushInFlight) return _flushInFlight;
+
+  const entries = loadFeedback();
+  const pending = entries.filter((e) => !e.sent).slice(0, FEEDBACK_BATCH_LIMIT);
+  if (pending.length === 0) return Promise.resolve({ sent: 0 });
+
+  // `sent` is ours, not the server's business; it would be stored as an unused
+  // column and read as if it meant something there.
+  const payload = pending.map(({ sent, ...rest }) => rest);
+
+  _flushInFlight = fetch(FEEDBACK_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    // The session cookie is what identifies the tester; without it the gate
+    // answers with the login page and nothing is stored.
+    credentials: "same-origin",
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      for (const entry of pending) entry.sent = true;
+      persistFeedback();
+      if (typeof log === "function") {
+        log(t("feedback.sent", { count: pending.length }));
+      }
+      return { sent: pending.length };
+    })
+    .catch((error) => {
+      if (typeof log === "function") {
+        log(t("feedback.sendFailed", { count: pending.length }));
+      }
+      return { sent: 0, error: String(error) };
+    })
+    .finally(() => {
+      _flushInFlight = null;
+    });
+
+  return _flushInFlight;
+}
+
 function submitFeedback(entry) {
-  if (typeof log === "function") {
-    log(t("feedback.queued", { genre: entry.corrected }));
-  }
-  return Promise.resolve({ queued: true, entry });
+  entry.sent = false;
+  return flushFeedback();
 }
 
 /*
