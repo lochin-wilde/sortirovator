@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.11";
+const APP_VERSION = "2026.07.29.12";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -1404,6 +1404,17 @@ ui.feedbackClear.addEventListener("click", () => {
   clearFeedback();
   log(t("feedback.cleared"));
 });
+
+/*
+ * Shows which build is running.
+ *
+ * Needed because a tester behind the gate has no other way to tell: the page
+ * source is not reachable, and "did my change actually deploy?" was otherwise
+ * unanswerable without the Cloudflare dashboard. Selectable so it can be pasted
+ * into a bug report.
+ */
+const versionBadge = el("app-version");
+if (versionBadge) versionBadge.textContent = "v" + APP_VERSION;
 
 initLanguage();
 probeEnvironment();

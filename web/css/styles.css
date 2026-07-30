@@ -489,3 +489,19 @@ th.sortable.sorted.descending::after {
 .link-button:hover {
   color: var(--text);
 }
+
+/* Version badge. Deliberately quiet -- it matters when something looks wrong
+   and should be invisible the rest of the time. */
+.site-footer {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 2.5rem;
+  text-align: right;
+}
+
+.version-badge {
+  font-size: 0.75rem;
+  color: var(--muted, #7c8496);
+  font-variant-numeric: tabular-nums;
+  user-select: all;
+}
