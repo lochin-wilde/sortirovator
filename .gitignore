@@ -22,6 +22,11 @@ npm-debug.log*
 graphify-out/
 tmp_bp/
 
+# The abandoned Tauri attempt. Its build output reappears whenever the
+# directory is opened in an editor, and it is 16 MB of artifacts that the
+# browser version replaced.
+music-sorter-tauri/
+
 # Ground-truth exports and analysis caches. These describe a private music
 # library — track titles, artists, folder layout — and are not ours to publish.
 # The measurement harness reads them from outside the repo by design.
