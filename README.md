@@ -64,9 +64,10 @@ node tools/test_gate.mjs functions/_middleware.js   # access control
 node tools/test_feedback.mjs                        # corrections API
 node tools/test_paths.mjs                           # ZIP folder names
 node tools/test_translit.mjs                        # Latin -> Cyrillic
+node tools/test_cleanup.mjs                         # filename cleanup
 ```
 
-All four run without a network, a database or a browser.
+All five run without a network, a database or a browser.
 
 ## Deploying
 

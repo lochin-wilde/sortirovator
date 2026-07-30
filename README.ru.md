@@ -65,9 +65,10 @@ node tools/test_gate.mjs functions/_middleware.js   # контроль дост�
 node tools/test_feedback.mjs                        # приём исправлений
 node tools/test_paths.mjs                           # имена папок в архиве
 node tools/test_translit.mjs                        # латиница -> кириллица
+node tools/test_cleanup.mjs                         # чистка имён файлов
 ```
 
-Все четыре набора работают без сети, без базы и без браузера.
+Все пять наборов работают без сети, без базы и без браузера.
 
 ## Выкладка
 
