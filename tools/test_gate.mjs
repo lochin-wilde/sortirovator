@@ -103,6 +103,18 @@ check("GET /logout ничего не гасит", !/Max-Age=0/.test(r.headers.ge
 //     (сервер её погасил у клиента; сама подпись остаётся валидной, поэтому
 //      проверяем именно то, что гарантирует сервер — гашение, а не отзыв)
 
+// 12a. POST с JSON без сессии — это не попытка входа, а запрос от приложения,
+//      у которого истекла сессия. Должен получить отказ, а не 500.
+const jsonPost = new Request("https://example.com/api/feedback", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify([{ corrected: "Techno" }]),
+});
+const servedBeforeJson = served;
+r = await run(jsonPost);
+check("POST с JSON без сессии -> 401, а не 500", r.status === 401);
+check("и приложение при этом не отдано", served === servedBeforeJson);
+
 // 13. Забыли настроить — закрыто, а не открыто
 r = await run(req("GET"), { SESSION_SECRET: "", INVITE_CODES: "" });
 check("без настройки -> 503, приложение не отдано", r.status === 503 && served === 1);
