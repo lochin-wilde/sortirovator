@@ -210,8 +210,29 @@ export async function onRequest(context) {
     return next();
   }
 
-  if (request.method === "POST") {
-    const form = await request.formData();
+  /*
+   * A POST without a session is treated as someone submitting the login form --
+   * but it is not necessarily one. The app POSTs JSON to /api/feedback, and if
+   * the session expired between loading the page and correcting a genre, that
+   * request lands here. Reading it as a form throws, and an exception in
+   * middleware means a 500 for what is simply an unauthenticated request.
+   *
+   * So the body is only parsed when it claims to be a form, and a failure to
+   * parse answers with the login page rather than propagating. Every path out
+   * of here still refuses to serve the app, which is the part that matters.
+   */
+  const contentType = request.headers.get("Content-Type") || "";
+  const looksLikeLoginForm =
+    contentType.includes("application/x-www-form-urlencoded") ||
+    contentType.includes("multipart/form-data");
+
+  if (request.method === "POST" && looksLikeLoginForm) {
+    let form;
+    try {
+      form = await request.formData();
+    } catch (e) {
+      return htmlResponse(loginPage(""), 401);
+    }
     const submitted = String(form.get("code") || "").trim().toUpperCase();
 
     let codes;
