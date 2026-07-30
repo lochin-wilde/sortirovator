@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
-const src = readFileSync(process.argv[2], "utf8");
+// Path stays overridable, but defaults like every other test here: a suite
+// where one member needs an argument and four do not looks broken when the
+// lot are run together, and a test that looks broken stops being run.
+const src = readFileSync(process.argv[2] || "functions/_middleware.js", "utf8");
 const mod = await import("data:text/javascript;base64," + Buffer.from(src).toString("base64"));
 
 const SECRET = "тестовый-секрет-32-байта-минимум-ок";

@@ -70,6 +70,12 @@ export async function onRequest(context) {
     return json({ error: "storage not configured" }, 503);
   }
 
+  /*
+   * Content-Length is a claim, not a fact: a client may omit it, send a chunked
+   * body, or simply lie. Checking it first is still worth doing, because it
+   * rejects an oversized upload before any of it is read -- but the body has to
+   * be measured as well, or the limit is advisory.
+   */
   const declared = Number(request.headers.get("Content-Length"));
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
     return json({ error: "payload too large" }, 413);
@@ -77,7 +83,11 @@ export async function onRequest(context) {
 
   let payload;
   try {
-    payload = await request.json();
+    const raw = await request.text();
+    if (raw.length > MAX_BODY_BYTES) {
+      return json({ error: "payload too large" }, 413);
+    }
+    payload = JSON.parse(raw);
   } catch (e) {
     return json({ error: "malformed json" }, 400);
   }
