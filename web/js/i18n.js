@@ -25,7 +25,7 @@ const TRANSLATIONS = {
 
     "step2.title": "Choose what to run",
     "step2.fixNames": "Fix track names",
-    "step2.fixNamesHint": "Look the track up on MusicBrainz and rename it to the canonical Artist - Title.",
+    "step2.fixNamesHint": "Look the track up on iTunes and MusicBrainz and rename it to the canonical Artist - Title.",
     "step2.sort": "Sort by genre",
     "step2.sortHint": "Place each track into a folder named after its genre.",
     "step2.bpmKey": "Detect BPM and key",
@@ -49,11 +49,11 @@ const TRANSLATIONS = {
     "loudness.prefix": "Add LUFS prefix to filename",
 
     "lookups.legend": "Online lookups",
-    "lookups.musicbrainz": "Use MusicBrainz (genre tags and name fixing)",
+    "lookups.musicbrainz": "Identify tracks online — iTunes and MusicBrainz (names, genre tags)",
     "lookups.discogs": "Use Discogs (the most precise genre source)",
     "lookups.lastfm": "Last.fm API key (optional)",
     "lookups.lastfmPlaceholder": "Leave empty to skip Last.fm",
-    "lookups.hint": "Only the artist and title are sent, never the audio. MusicBrainz allows one request per second and Discogs 25 per minute, so large batches with lookups enabled take a while. Turn both off to run fully offline on audio analysis alone.",
+    "lookups.hint": "Only the artist and title are sent, never the audio. iTunes is asked first because it has far more of the streaming era; MusicBrainz answers where iTunes has nothing. Both allow about one request per second and Discogs 25 per minute, so large batches with lookups enabled take a while. Turn both off to run fully offline on audio analysis alone.",
 
     "step3.title": "Run",
     "step3.start": "Start analysis",
@@ -165,7 +165,7 @@ const TRANSLATIONS = {
 
     "step2.title": "Что запустить",
     "step2.fixNames": "Исправить названия",
-    "step2.fixNamesHint": "Найти трек в MusicBrainz и переименовать в канонический вид «Исполнитель — Название».",
+    "step2.fixNamesHint": "Найти трек в iTunes и MusicBrainz и переименовать в канонический вид «Исполнитель — Название».",
     "step2.sort": "Разложить по жанрам",
     "step2.sortHint": "Каждый трек попадёт в папку с названием своего жанра.",
     "step2.bpmKey": "Определить BPM и тональность",
@@ -189,11 +189,11 @@ const TRANSLATIONS = {
     "loudness.prefix": "Добавить LUFS в начало имени файла",
 
     "lookups.legend": "Поиск в интернете",
-    "lookups.musicbrainz": "Использовать MusicBrainz (жанры и исправление названий)",
+    "lookups.musicbrainz": "Опознавать треки в интернете — iTunes и MusicBrainz (названия, жанры)",
     "lookups.discogs": "Использовать Discogs (самый точный источник жанров)",
     "lookups.lastfm": "Ключ Last.fm API (необязательно)",
     "lookups.lastfmPlaceholder": "Оставьте пустым, чтобы не обращаться к Last.fm",
-    "lookups.hint": "Наружу уходят только исполнитель и название, звук — никогда. MusicBrainz разрешает один запрос в секунду, Discogs — 25 в минуту, поэтому большие пачки с поиском идут долго. Отключите оба, чтобы работать полностью офлайн — только по анализу звука.",
+    "lookups.hint": "Наружу уходят только исполнитель и название, звук — никогда. Сначала спрашиваем iTunes: у него заметно полнее покрыта стриминговая эпоха; MusicBrainz отвечает там, где у iTunes ничего нет. Оба разрешают примерно один запрос в секунду, Discogs — 25 в минуту, поэтому большие пачки с поиском идут долго. Отключите оба, чтобы работать полностью офлайн — только по анализу звука.",
 
     "step3.title": "Запуск",
     "step3.start": "Начать анализ",

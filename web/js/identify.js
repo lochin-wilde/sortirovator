@@ -165,6 +165,16 @@ const LATIN_TO_CYRILLIC = [
    */
   ["ay", "ай"], ["oy", "ой"], ["ey", "ей"], ["uy", "уй"],
   ["iy", "ий"], ["yy", "ый"],
+  /*
+   * "je" is "е" in the common schemes, and reading it letter by letter gave
+   * "йе": "shadje" came back "шадйе" where "шаде" was wanted. Measured over 184
+   * titles this changes nothing either way -- exact restorations and bad ones
+   * both stay put -- so it is here on the strength of being correct and of the
+   * one case that prompted it, not on a measured gain. Adding "ye" -> "е"
+   * alongside it was tried and made things worse (72.3% exact to 71.4%),
+   * because "ye" is far more often the "ые"/"ей" the table already handles.
+   */
+  ["je", "е"],
   ["kh", "х"], ["ts", "ц"], ["jj", "й"],
   ["a", "а"], ["b", "б"], ["v", "в"], ["g", "г"], ["d", "д"],
   ["e", "е"], ["z", "з"], ["i", "и"], ["j", "й"], ["k", "к"],
@@ -676,6 +686,19 @@ const rateLimited = makeRateLimiter(1000);        // MusicBrainz
 const discogsRateLimited = makeRateLimiter(2500); // Discogs, 25/min
 
 /*
+ * iTunes. Apple documents "approximately 20 calls per minute" and publishes no
+ * headers to negotiate with, while 25 back-to-back requests measured here drew
+ * no throttling at all. One second is the middle ground: three times the
+ * documented rate, well under what the service actually tolerated, and the same
+ * pace already used for MusicBrainz.
+ *
+ * The honest part is what happens when that guess is wrong -- see
+ * itunesUnavailable below. A throttled client stops asking rather than paying
+ * for a refusal on every remaining track.
+ */
+const itunesRateLimited = makeRateLimiter(1000);
+
+/*
  * MusicBrainz answers 503 whenever its rate limiter thinks a client is going
  * too fast, and that reply is indistinguishable from "no such recording" if it
  * is swallowed. Retrying with a widening delay turns a transient throttle back
@@ -710,6 +733,53 @@ let lastLookupError = null;
 // Same character set musicbrainzngs._escape_lucene_query() escapes.
 function luceneEscape(text) {
   return text.replace(/([+\-&|!(){}\[\]^"~*?:\\/])/g, "\\$1");
+}
+
+/*
+ * iTunes search.
+ *
+ * Added because MusicBrainz misses most of a modern Russian-language library.
+ * Measured over ten releases named from outside either database: MusicBrainz
+ * found 5, iTunes 8, and the four iTunes found alone -- Xcho's "Шадэ", ANNA
+ * ASTI's "Феникс", Инстасамка's "За деньги да", Хаски's "Пуля-дура" -- are all
+ * streaming-era releases that never got a physical pressing. Discogs was tried
+ * in this position first and found nothing MusicBrainz did not.
+ *
+ * What it is good for is identity: the canonical artist credit, the title and
+ * the release year. Its genre field is not usable here -- everything Russian
+ * and rhythmic comes back "Pop" or "Hip-Hop/Rap", which is the granularity this
+ * project exists to improve on -- so the genre chain is left alone and only
+ * gets better strings to work with.
+ */
+const ITUNES_SEARCH = "https://itunes.apple.com/search";
+
+/*
+ * Set once iTunes refuses a request, and never cleared for the rest of the
+ * page's life. A 403 from Apple means the rate guess was wrong, and the useful
+ * response to that is to stop asking: continuing would spend a request per
+ * track to be told no, delaying a batch that MusicBrainz can still answer.
+ */
+let itunesUnavailable = false;
+
+async function searchItunes(artist, track, limit) {
+  if (itunesUnavailable) return [];
+  // Free text rather than fielded search: iTunes has no artist/track fields,
+  // and its own matching handles "artist title" as one phrase well.
+  const url = ITUNES_SEARCH + "?term=" + encodeURIComponent(artist + " " + track) +
+    "&entity=song&limit=" + (limit || 8);
+  try {
+    const data = await itunesRateLimited(() => fetchJson(url));
+    return data.results || [];
+  } catch (e) {
+    if (/HTTP 40[39]/.test(e.message)) {
+      itunesUnavailable = true;
+      lastLookupError = "iTunes refused further requests (" + e.message +
+        "); the rest of this batch uses MusicBrainz only";
+    } else {
+      lastLookupError = "iTunes search failed: " + e.message;
+    }
+    return [];
+  }
 }
 
 async function searchMusicbrainzRecordings(artist, track, limit) {
@@ -861,18 +931,90 @@ async function tryIdentify(artist, track) {
 }
 
 /*
- * Port of identify_track(). A plain-ASCII filename is often a Latin
- * transliteration of a Cyrillic original, and MusicBrainz's own fuzzy search
- * does not bridge that gap, so the query is retried in Cyrillic before giving
- * up. The similarity gates still guard against a confident wrong match.
+ * The same gates as tryIdentify(), against iTunes results.
+ *
+ * Deliberately the same thresholds. iTunes is the broader source, not the more
+ * trustworthy one, and a free-text search over a huge catalogue will happily
+ * return something for a query that matches nothing -- so the answer it gives
+ * has to clear exactly the bar a MusicBrainz answer clears.
+ */
+async function tryIdentifyItunes(artist, track) {
+  const results = await searchItunes(artist, track, 8);
+  let best = null;
+  let bestCombined = -1;
+
+  for (const result of results) {
+    const canonicalTitle = result.trackName || "";
+    const canonicalArtist = result.artistName || "";
+    if (!canonicalTitle || !canonicalArtist) continue;
+
+    const titleSimilarity = textSimilarity(track, canonicalTitle);
+    const artistSimilarity = textSimilarity(artist, canonicalArtist);
+    const coreSimilarity = textSimilarity(coreTitle(track), coreTitle(canonicalTitle));
+
+    if (coreSimilarity < IDENTIFY_MIN_CORE_TITLE_SIMILARITY) continue;
+    if (titleSimilarity < IDENTIFY_MIN_TITLE_SIMILARITY) continue;
+    if (artistSimilarity < IDENTIFY_MIN_ARTIST_SIMILARITY) continue;
+
+    const combined = coreSimilarity * 2 + titleSimilarity + artistSimilarity;
+    if (combined > bestCombined) {
+      bestCombined = combined;
+      const year = parseInt(String(result.releaseDate || "").slice(0, 4), 10);
+      best = {
+        artist: canonicalArtist,
+        title: canonicalTitle,
+        // No MusicBrainz recording id from this source, so the genre lookup
+        // searches by name as it did before any id was available. Named
+        // explicitly rather than left undefined, so a caller reading `id` sees
+        // an absence rather than a bug.
+        id: null,
+        source: "itunes",
+        year: Number.isFinite(year) ? year : null,
+        titleSimilarity: Math.round(titleSimilarity * 100) / 100,
+        coreSimilarity: Math.round(coreSimilarity * 100) / 100,
+        artistSimilarity: Math.round(artistSimilarity * 100) / 100,
+      };
+    }
+  }
+  return best;
+}
+
+/*
+ * Identification, iTunes first and MusicBrainz second.
+ *
+ * The order follows coverage rather than data quality. MusicBrainz is the
+ * better catalogue -- structured artist credits, recording ids, moderated
+ * genres -- but it simply does not have most of a modern Russian-language
+ * library, and a source that lacks the record cannot rank it. Measured over ten
+ * such releases: iTunes 8, MusicBrainz 5, and the four only iTunes had were all
+ * streaming-only.
+ *
+ * Both are asked in Cyrillic too when the filename is plain ASCII, since such a
+ * name is often a transliteration and neither service's fuzzy search bridges
+ * that gap on its own.
  */
 async function identifyTrack(artist, track) {
-  let match = await tryIdentify(artist, track);
+  const isAscii = (text) => /^[\x00-\x7F]*$/.test(text);
+  const asciiInput = isAscii(artist) && isAscii(track);
+  const cyrillicArtist = asciiInput ? toCyrillic(artist) : null;
+  const cyrillicTrack = asciiInput ? toCyrillic(track) : null;
+
+  let match = await tryIdentifyItunes(artist, track);
   if (match) return match;
 
-  const isAscii = (text) => /^[\x00-\x7F]*$/.test(text);
-  if (isAscii(artist) && isAscii(track)) {
-    match = await tryIdentify(toCyrillic(artist), toCyrillic(track));
+  if (asciiInput) {
+    match = await tryIdentifyItunes(cyrillicArtist, cyrillicTrack);
+    if (match) {
+      match.viaTransliteration = true;
+      return match;
+    }
+  }
+
+  match = await tryIdentify(artist, track);
+  if (match) return match;
+
+  if (asciiInput) {
+    match = await tryIdentify(cyrillicArtist, cyrillicTrack);
     if (match) {
       match.viaTransliteration = true;
       return match;
