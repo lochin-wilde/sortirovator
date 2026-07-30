@@ -134,6 +134,82 @@ async function sessionLabel(secret, token) {
   return label ? decodeLabel(label) : "";
 }
 
+/*
+ * Rate limiting for the login form, done here rather than in Cloudflare.
+ *
+ * Cloudflare's own rate limiting rules are configured per zone -- per domain
+ * you own -- and this deployment answers on a pages.dev address, which belongs
+ * to Cloudflare. There is no zone to attach a rule to. Doing it in code also
+ * means the protection moves with the app if it is ever hosted elsewhere.
+ *
+ * What it defends against: the form answers every guess instantly and for free,
+ * so without a limit an attacker gets unlimited tries at no cost. The codes are
+ * 20+ random characters, so this is not the only thing standing in the way --
+ * it is what keeps a determined guesser from making the attempt cheap.
+ *
+ * Only failures are counted, and a success clears the record, so a tester
+ * mistyping their own code a few times is never locked out for long.
+ */
+const RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
+const RATE_LIMIT_MAX_FAILURES = 10;
+
+function clientAddress(request) {
+  // Set by Cloudflare on every request that reaches a Function; absent only
+  // when running the middleware outside their network, as the tests do.
+  return request.headers.get("CF-Connecting-IP") || "";
+}
+
+/*
+ * Returns the number of seconds to wait, or 0 to let the attempt through.
+ *
+ * Fails open. If the database is unreachable, the choice is between refusing
+ * every login and losing the limit for the duration of the outage. Refusing
+ * would lock out testers who did nothing wrong, to defend against guessing a
+ * 20-character random code -- so the door stays open and the outage stays
+ * visible instead of becoming a lockout nobody can explain. Note this is the
+ * opposite of how the gate itself behaves, and deliberately: the gate failing
+ * closed protects the app, this failing closed would only deny it.
+ */
+async function loginRetryDelay(db, ip) {
+  if (!db || !ip) return 0;
+  const cutoff = Math.floor(Date.now() / 1000) - RATE_LIMIT_WINDOW_SECONDS;
+  try {
+    const row = await db
+      .prepare("SELECT COUNT(*) AS failures, MIN(at) AS oldest FROM login_attempts WHERE ip = ? AND at > ?")
+      .bind(ip, cutoff)
+      .first();
+    const failures = (row && row.failures) || 0;
+    if (failures < RATE_LIMIT_MAX_FAILURES) return 0;
+    // Measured from the oldest failure still inside the window, so the block
+    // lifts gradually rather than resetting on every further attempt.
+    const oldest = (row && row.oldest) || cutoff;
+    return Math.max(1, oldest + RATE_LIMIT_WINDOW_SECONDS - Math.floor(Date.now() / 1000));
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function recordLoginFailure(db, ip) {
+  if (!db || !ip) return;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await db.batch([
+      db.prepare("INSERT INTO login_attempts (ip, at) VALUES (?, ?)").bind(ip, now),
+      // Old rows are cleared on the way past rather than by a scheduled job,
+      // which this project has nowhere to put.
+      db.prepare("DELETE FROM login_attempts WHERE at <= ?")
+        .bind(now - RATE_LIMIT_WINDOW_SECONDS),
+    ]);
+  } catch (e) { /* see loginRetryDelay: a failure to record must not deny login */ }
+}
+
+async function clearLoginFailures(db, ip) {
+  if (!db || !ip) return;
+  try {
+    await db.prepare("DELETE FROM login_attempts WHERE ip = ?").bind(ip).run();
+  } catch (e) { /* harmless: the rows expire from the window on their own */ }
+}
+
 function readCookie(request, name) {
   const header = request.headers.get("Cookie") || "";
   for (const part of header.split(";")) {
@@ -182,7 +258,7 @@ function loginPage(message) {
 </body></html>`;
 }
 
-function htmlResponse(body, status) {
+function htmlResponse(body, status, extraHeaders) {
   return new Response(body, {
     status,
     headers: {
@@ -191,6 +267,7 @@ function htmlResponse(body, status) {
       // The login page must never be framed by another site.
       "X-Frame-Options": "DENY",
       "Referrer-Policy": "no-referrer",
+      ...extraHeaders,
     },
   });
 }
@@ -261,6 +338,23 @@ export async function onRequest(context) {
     contentType.includes("multipart/form-data");
 
   if (request.method === "POST" && looksLikeLoginForm) {
+    const ip = clientAddress(request);
+
+    /*
+     * Checked before the body is read, so a blocked address cannot spend the
+     * worker's time on parsing either. Retry-After is set because it is the
+     * honest answer to "when can I try again", and a well-behaved client reads
+     * it; a guesser ignoring it simply keeps getting 429.
+     */
+    const wait = await loginRetryDelay(env.DB, ip);
+    if (wait > 0) {
+      const minutes = Math.ceil(wait / 60);
+      return htmlResponse(
+        loginPage(`Слишком много попыток. Повторите через ${minutes} мин.`),
+        429,
+        { "Retry-After": String(wait) });
+    }
+
     let form;
     try {
       form = await request.formData();
@@ -284,8 +378,13 @@ export async function onRequest(context) {
     }
 
     if (!matched) {
+      await recordLoginFailure(env.DB, ip);
       return htmlResponse(loginPage("Код не подошёл."), 401);
     }
+
+    // A tester who mistyped their own code a few times before getting it right
+    // starts from a clean slate rather than carrying those failures around.
+    await clearLoginFailures(env.DB, ip);
 
     const token = await issueSession(secret, matched);
     const response = new Response(null, { status: 303, headers: { Location: "/" } });

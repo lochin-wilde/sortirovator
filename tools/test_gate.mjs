@@ -18,11 +18,56 @@ const env = { SESSION_SECRET: SECRET, INVITE_CODES: CODES };
 let served = 0;
 const next = async () => { served++; return new Response("ПРИЛОЖЕНИЕ", { status: 200 }); };
 
-const req = (method, opts = {}) => new Request("https://example.com/", {
-  method,
-  headers: opts.cookie ? { Cookie: opts.cookie } : {},
-  body: opts.code !== undefined ? new URLSearchParams({ code: opts.code }) : undefined,
-});
+const req = (method, opts = {}) => {
+  const headers = {};
+  if (opts.cookie) headers.Cookie = opts.cookie;
+  if (opts.ip) headers["CF-Connecting-IP"] = opts.ip;
+  return new Request("https://example.com/", {
+    method,
+    headers,
+    body: opts.code !== undefined ? new URLSearchParams({ code: opts.code }) : undefined,
+  });
+};
+
+/*
+ * Stand-in for D1, holding just enough to answer the three statements the rate
+ * limiter issues. Real SQL is not parsed -- the statements are recognised by
+ * shape -- so this tests the limiter's decisions, not SQLite.
+ */
+const makeAttemptsDb = ({ fail = false } = {}) => {
+  let rows = [];
+  const exec = (sql, args) => {
+    if (fail) throw new Error("D1 unavailable");
+    if (sql.startsWith("SELECT")) {
+      const [ip, cutoff] = args;
+      const hits = rows.filter((r) => r.ip === ip && r.at > cutoff);
+      return {
+        failures: hits.length,
+        oldest: hits.length ? Math.min(...hits.map((r) => r.at)) : null,
+      };
+    }
+    if (sql.startsWith("INSERT")) rows.push({ ip: args[0], at: args[1] });
+    else if (sql.includes("WHERE at <=")) rows = rows.filter((r) => r.at > args[0]);
+    else if (sql.includes("WHERE ip =")) rows = rows.filter((r) => r.ip !== args[0]);
+    return null;
+  };
+  return {
+    get rows() { return rows; },
+    prepare(sql) {
+      return {
+        bind: (...args) => ({
+          first: async () => exec(sql, args),
+          run: async () => exec(sql, args),
+          _apply: () => exec(sql, args),
+        }),
+      };
+    },
+    async batch(statements) {
+      if (fail) throw new Error("D1 unavailable");
+      for (const s of statements) s._apply();
+    },
+  };
+};
 
 /*
  * `data` is the object Cloudflare passes from middleware to the routes behind
@@ -154,6 +199,51 @@ check("POST с JSON без сессии -> 401, а не 500", r.status === 401);
 check("и приложение при этом не отдано", served === servedBeforeJson);
 
 // 13. Забыли настроить — закрыто, а не открыто
+// 14. Ограничение частоты попыток входа
+{
+  const db = makeAttemptsDb();
+  const envRL = { ...env, DB: db };
+  const guess = (ip) => run(req("POST", { code: "НЕВЕРНЫЙ", ip }), envRL);
+
+  let last;
+  for (let i = 0; i < 10; i++) last = await guess("203.0.113.7");
+  check("десять неверных попыток ещё отвечают 401", last.status === 401);
+
+  last = await guess("203.0.113.7");
+  check("одиннадцатая -> 429", last.status === 429);
+  check("сказано, когда повторить", Number(last.headers.get("Retry-After")) > 0);
+  check("в теле объяснение, а не пустая ошибка",
+    (await last.text()).includes("Слишком много попыток"));
+
+  // Правильный код от заблокированного адреса тоже не проходит: иначе
+  // ограничение снималось бы подбором, ради которого оно и стоит.
+  last = await run(req("POST", { code: "DJ-AAAA-BBBB-CCCC", ip: "203.0.113.7" }), envRL);
+  check("верный код с заблокированного адреса -> 429", last.status === 429);
+
+  // Счёт ведётся по адресу, а не глобально: чужой перебор не должен запирать
+  // тестировщика, который ни при чём.
+  last = await run(req("POST", { code: "DJ-AAAA-BBBB-CCCC", ip: "198.51.100.2" }), envRL);
+  check("другой адрес не затронут", last.status === 303);
+
+  // Успешный вход стирает прежние неудачи этого адреса.
+  const db2 = makeAttemptsDb();
+  const env2 = { ...env, DB: db2 };
+  for (let i = 0; i < 5; i++) await run(req("POST", { code: "МИМО", ip: "198.51.100.9" }), env2);
+  await run(req("POST", { code: "DJ-AAAA-BBBB-CCCC", ip: "198.51.100.9" }), env2);
+  check("успешный вход обнуляет счётчик",
+    db2.rows.filter((r) => r.ip === "198.51.100.9").length === 0);
+
+  // Недоступная база не должна запирать вход: иначе сбой хранилища
+  // превращается в отказ в обслуживании для тех, кто ни в чём не виноват.
+  const envBroken = { ...env, DB: makeAttemptsDb({ fail: true }) };
+  last = await run(req("POST", { code: "DJ-AAAA-BBBB-CCCC", ip: "203.0.113.7" }), envBroken);
+  check("сбой базы не запирает вход", last.status === 303);
+
+  // Без привязки базы ограничение просто не действует, а не падает.
+  last = await run(req("POST", { code: "DJ-AAAA-BBBB-CCCC", ip: "203.0.113.7" }), env);
+  check("без базы вход работает как раньше", last.status === 303);
+}
+
 const servedBeforeUnconfigured = served;
 r = await run(req("GET"), { SESSION_SECRET: "", INVITE_CODES: "" });
 check("без настройки -> 503, приложение не отдано",

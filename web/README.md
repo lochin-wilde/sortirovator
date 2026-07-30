@@ -68,6 +68,28 @@ directory: code shipped to the browser cannot keep a secret, so a check that
 runs there can only ever be a suggestion. It also could not be reconciled with
 individual codes without publishing them.
 
+### Rate limiting
+
+The form answers every guess instantly and for free, so without a limit a
+guesser gets unlimited tries at no cost. Ten failures from one address inside
+fifteen minutes and further attempts are answered 429 with a `Retry-After`,
+including attempts carrying a correct code -- otherwise the limit could be
+lifted by the very guessing it exists to stop. Only failures are counted and a
+success clears that address, so mistyping your own code a few times costs
+nothing.
+
+This is done in `_middleware.js` against a D1 table rather than with
+Cloudflare's own rate limiting rules, which are configured per zone -- per
+domain you own. This deployment answers on a pages.dev address, which belongs to
+Cloudflare, so there is no zone to attach a rule to. Doing it in code also means
+the protection travels with the app to any host.
+
+**It fails open.** If the database is unreachable the limit is skipped rather
+than the login refused: refusing would lock out testers who did nothing wrong in
+order to defend a 20-character random code. That is the opposite of how the gate
+itself behaves, and deliberately so -- the gate failing closed protects the app,
+this failing closed would only deny it.
+
 Serving `web/` from a static host with no middleware — GitHub Pages, Netlify
 without functions, `python3 -m http.server` — therefore means no gate at all.
 That is the correct behaviour for local development and the wrong deployment for
