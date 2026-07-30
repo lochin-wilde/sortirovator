@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.14";
+const APP_VERSION = "2026.07.30.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -400,6 +400,36 @@ function setFileLabel(text) {
 function normalizeGenre(genre, genresMap) {
   if (!genre) return "Unknown";
   return genreForTag(genresMap, genre.toLowerCase()) || "Unknown";
+}
+
+/*
+ * A category name, made safe to use as one folder inside the ZIP.
+ *
+ * Seven of the 51 categories read as a pair -- "Funky / Disco House",
+ * "Funk / Soul", "Reggae / Dancehall" -- and a slash is the path separator in a
+ * ZIP entry. Used as written, those produced two nested folders whose names
+ * carried a trailing and a leading space, so a funky-house library unpacked
+ * into "Funky " containing " Disco House". Not a traversal risk, since no
+ * category contains "..", but wrong in a way nobody would notice until they
+ * opened the archive.
+ *
+ * The slash is replaced rather than dropped, because the pairing is the meaning
+ * of the name. The map itself keeps the slash: it is only a problem in a path,
+ * and it reads correctly in the results table.
+ */
+function genreFolderName(genre) {
+  const name = String(genre)
+    .replace(/\s*\/\s*/g, " & ")
+    .replace(FILENAME_UNSAFE_CHARS, "")
+    // Windows silently drops a trailing dot or space from a directory name,
+    // which would make the folder in the archive and the folder on disk differ.
+    .replace(/[\s.]+$/, "")
+    .trim();
+
+  // A name made only of punctuation is not a name. No real category looks like
+  // that, but this function stands between a lookup result and a filesystem
+  // path, so it answers for any input rather than for the expected ones.
+  return /[\p{L}\p{N}]/u.test(name) ? name : "Unknown";
 }
 
 /*
@@ -824,7 +854,8 @@ async function processFile(file, options, slot) {
 
   await workerRequest(worker, { type: "release" }, [], "released");
 
-  const folder = options.steps.sort && result.genre ? result.genre + "/" : "";
+  const folder = options.steps.sort && result.genre
+    ? genreFolderName(result.genre) + "/" : "";
   result.outputPath = uniquePath(folder + prefix + stem + outputExtension);
   state.zip.file(result.outputPath, outputBlob);
   state.producedCount++;
