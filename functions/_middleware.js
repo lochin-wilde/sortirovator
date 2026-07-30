@@ -65,9 +65,43 @@ function equalsConstantTime(a, b) {
   return diff === 0;
 }
 
+/*
+ * Percent-encoding, not stripping.
+ *
+ * The label is whatever the owner wrote next to a code in INVITE_CODES -- a
+ * person's name, in practice, and in this project's case a Russian one. An
+ * earlier version removed everything outside `\w`, which is ASCII-only, so
+ * "Ваня" became the empty string and every correction that tester made arrived
+ * unattributed. The label exists precisely to answer "who said this", so
+ * silently discarding it defeated the feature it feeds.
+ *
+ * Two constraints make encoding the right answer rather than a wider character
+ * class. A cookie value must be ASCII, so the name cannot go in raw; and the
+ * token is split on dots, so a dot inside a label would be read as a field
+ * boundary. encodeURIComponent handles the first and leaves dots alone, hence
+ * escaping them by hand.
+ *
+ * Old tokens carry plain ASCII labels, and decoding one of those returns it
+ * unchanged, so sessions issued before this change keep working.
+ */
+function encodeLabel(label) {
+  return encodeURIComponent(String(label)).replace(/\./g, "%2E");
+}
+
+function decodeLabel(encoded) {
+  try {
+    return decodeURIComponent(encoded);
+  } catch (e) {
+    // Malformed escapes cannot come from encodeLabel, so this is a token that
+    // was tampered with -- but its signature was already verified, so the safe
+    // reading is "a label we cannot interpret", not "no session".
+    return "";
+  }
+}
+
 async function issueSession(secret, label) {
   const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const payload = `${expires}.${label}`;
+  const payload = `${expires}.${encodeLabel(label)}`;
   return `${payload}.${await hmac(secret, payload)}`;
 }
 
@@ -91,13 +125,13 @@ async function sessionLabel(secret, token) {
   const expected = await hmac(secret, payload);
   if (!equalsConstantTime(signature, expected)) return null;
 
-  // issueSession() strips dots from the label, so the payload splits cleanly.
+  // issueSession() escapes dots in the label, so the payload splits cleanly.
   const [rawExpires, label] = payload.split(".");
   const expires = Number(rawExpires);
   if (!Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) {
     return null;
   }
-  return label || "";
+  return label ? decodeLabel(label) : "";
 }
 
 function readCookie(request, name) {
@@ -253,7 +287,7 @@ export async function onRequest(context) {
       return htmlResponse(loginPage("Код не подошёл."), 401);
     }
 
-    const token = await issueSession(secret, String(matched).replace(/[^\w-]/g, ""));
+    const token = await issueSession(secret, matched);
     const response = new Response(null, { status: 303, headers: { Location: "/" } });
     response.headers.append("Set-Cookie",
       `${COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; ` +
