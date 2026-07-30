@@ -22,11 +22,6 @@ npm-debug.log*
 graphify-out/
 tmp_bp/
 
-# The abandoned Tauri attempt (26 MB). The browser version replaced it; keeping
-# it in history would cost more than it is worth. Delete the directory once you
-# are sure nothing in it is still wanted.
-music-sorter-tauri/
-
 # Ground-truth exports and analysis caches. These describe a private music
 # library — track titles, artists, folder layout — and are not ours to publish.
 # The measurement harness reads them from outside the repo by design.
@@ -46,6 +41,6 @@ ground-truth/
 .vscode/
 *.swp
 
-# Локальные значения секретов гейта — задаются в Cloudflare, не здесь.
+# Local values for the gate's secrets. They are set in Cloudflare, not here.
 .dev.vars
 wrangler.toml.local
