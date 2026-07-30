@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.29.15";
+const APP_VERSION = "2026.07.30.6";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -170,28 +170,47 @@ function formatMegabytes(bytes) {
 }
 
 /*
- * jszip is 28 KB gzipped and is not needed until a batch actually starts, which
- * is after the user has picked files and pressed the button -- long enough that
- * the download never delays anything they are waiting on. Loading it up front
- * made it a quarter of the first-paint payload for a page that may never build
- * an archive at all.
+ * Scripts that are only needed once a batch starts.
+ *
+ * Nothing here is wanted to draw the page: the user has to pick files and press
+ * a button first, which is far longer than the download takes. Loading them up
+ * front made them two thirds of first paint on a page that may never run a
+ * batch at all.
+ *
+ *   jszip       28 KB gzipped, builds the output archive
+ *   identify.js 21 KB gzipped, filename parsing and the online lookups
+ *
+ * identify.js is safe to detach because it defines everything it uses and
+ * nothing outside processFile() and resolveGenre() calls into it -- both of
+ * which run inside a batch, after this has resolved.
  */
-let _zipLibraryPromise = null;
+const _scriptPromises = new Map();
 
-function ensureZipLibrary() {
-  if (typeof JSZip !== "undefined") return Promise.resolve();
-  if (_zipLibraryPromise) return _zipLibraryPromise;
-  _zipLibraryPromise = new Promise((resolve, reject) => {
+function loadScriptOnce(src, isLoaded) {
+  if (isLoaded()) return Promise.resolve();
+  const pending = _scriptPromises.get(src);
+  if (pending) return pending;
+  const promise = new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "js/lib/jszip.min.js?v=" + APP_VERSION;
+    script.src = src + "?v=" + APP_VERSION;
     script.onload = () => resolve();
     script.onerror = () => {
-      _zipLibraryPromise = null;
-      reject(new Error("jszip failed to load"));
+      // Cleared so a later attempt can retry rather than reuse the rejection.
+      _scriptPromises.delete(src);
+      reject(new Error(src + " failed to load"));
     };
     document.head.appendChild(script);
   });
-  return _zipLibraryPromise;
+  _scriptPromises.set(src, promise);
+  return promise;
+}
+
+function ensureZipLibrary() {
+  return loadScriptOnce("js/lib/jszip.min.js", () => typeof JSZip !== "undefined");
+}
+
+function ensureIdentifyLibrary() {
+  return loadScriptOnce("js/identify.js", () => typeof parseFilename !== "undefined");
 }
 
 function handleSelection(fileList) {
@@ -1149,7 +1168,7 @@ async function runBatch() {
   }
 
   try {
-    await ensureZipLibrary();
+    await Promise.all([ensureZipLibrary(), ensureIdentifyLibrary()]);
   } catch (e) {
     log(t("msg.zipUnavailable"));
     return;
