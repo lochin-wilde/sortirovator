@@ -39,10 +39,105 @@ function fileExtension(filename) {
  * and nothing else. Years, "Vol. 44", "Pt.1" and "202 bpm" all appear in
  * genuine titles too and are left alone.
  */
+/*
+ * Junk added by the sites files are downloaded from, none of which is ever part
+ * of a title.
+ *
+ * Each rule below is narrow on purpose. The danger is not leaving junk in -- a
+ * lookup usually survives that -- but cutting into a real title, which produces
+ * a confident wrong match or no match at all, silently. So a pattern is only
+ * here if it cannot plausibly occur in a name someone chose.
+ *
+ * A version marker is never junk: "(Radio Edit)", "(Extended Mix)", "(VIP)"
+ * change which recording this is, and the lookup is built to keep them. Nor is
+ * a year or a number on its own -- see the note above about "4 x 4 - JUJO".
+ */
+// Subdomains included: these sites label their files "[eu.hitmotop.com]" as
+// often as "[hitmotop.com]", and a pattern matching only the last two labels
+// left the "eu." behind, which then failed the whole-content test below.
+const SITE_DOMAIN = /\b(?:[a-z0-9][a-z0-9-]*\.)+(ru|com|net|org|me|cc|info|biz|io|fm|su|ua|kz)\b/i;
+const MEDIA_LABEL = /^(official\s+)?(music\s+)?(video|audio|lyrics?|lyric\s+video|visualizer|клип|премьера(\s+песни)?|текст\s+песни)$/i;
+
 const CLEANUP_RULES = [
   { key: "clean.underscores", test: /_/, apply: (s) => s.replace(/_/g, " ") },
+
+  /*
+   * A bracket whose whole content is a site address: "[eu.hitmotop.com]",
+   * "(muzofond.com)". Whole content, not merely containing one, so a title that
+   * happens to mention a site keeps it.
+   */
+  {
+    key: "clean.site",
+    test: new RegExp("[\\(\\[]\\s*" + SITE_DOMAIN.source + "\\s*[\\)\\]]", "i"),
+    apply: (s) => s.replace(
+      new RegExp("\\s*[\\(\\[]\\s*" + SITE_DOMAIN.source + "\\s*[\\)\\]]", "gi"), " "),
+  },
+
+  /*
+   * The same address without brackets, but only at an edge and only when set
+   * off by a separator -- "Artist - Title - muzmo.ru". Mid-string it is far
+   * more likely to belong to the name.
+   */
+  {
+    key: "clean.site",
+    test: new RegExp("(^\\s*" + SITE_DOMAIN.source + "\\s*[-–—|]|[-–—|]\\s*" + SITE_DOMAIN.source + "\\s*$)", "i"),
+    apply: (s) => s
+      .replace(new RegExp("^\\s*" + SITE_DOMAIN.source + "\\s*[-–—|]\\s*", "i"), "")
+      .replace(new RegExp("\\s*[-–—|]\\s*" + SITE_DOMAIN.source + "\\s*$", "i"), ""),
+  },
+
+  /*
+   * Bitrate and format tags. The number has to be followed by a unit, so a
+   * bare "(320)" -- which could be anything -- is left alone.
+   */
+  {
+    key: "clean.bitrate",
+    test: /[\(\[]?\s*\d{2,3}\s?(kbps|kbit|kb\/s)\s*[\)\]]?|[\(\[]\s*(mp3|flac|wav|m4a)\s*[\)\]]/i,
+    apply: (s) => s
+      .replace(/\s*[\(\[]?\s*\d{2,3}\s?(kbps|kbit|kb\/s)\s*[\)\]]?/gi, " ")
+      .replace(/\s*[\(\[]\s*(mp3|flac|wav|m4a)\s*[\)\]]/gi, " "),
+  },
+
+  /*
+   * "(Official Video)", "(клип)" and their relatives. Matched as the entire
+   * bracket content, so "(Live at Wembley)" and "(Radio Edit)" are untouched.
+   */
+  {
+    key: "clean.mediaLabel",
+    test: /[\(\[][^()\[\]]+[\)\]]/,
+    apply: (s) => s.replace(/\s*[\(\[]([^()\[\]]+)[\)\]]/g,
+      (whole, inner) => (MEDIA_LABEL.test(inner.trim()) ? " " : whole)),
+  },
+
   { key: "clean.spaces", test: /\s{2,}/, apply: (s) => s.replace(/\s{2,}/g, " ") },
-  { key: "clean.downloadId", test: /\s\d{5,}$/, apply: (s) => s.replace(/\s+\d{5,}$/, "") },
+
+  /*
+   * The download id, which these sites append. Five digits or more: four could
+   * be a year, and a year in a title is meaningful. Accepted bracketed or set
+   * off by a separator as well as bare, because the same id arrives all three
+   * ways.
+   */
+  {
+    key: "clean.downloadId",
+    test: /(\s|[-–—])\d{5,}$|[\(\[]\s*\d{5,}\s*[\)\]]\s*$/,
+    apply: (s) => s
+      .replace(/\s*[\(\[]\s*\d{5,}\s*[\)\]]\s*$/, "")
+      .replace(/\s*[-–—]?\s+\d{5,}$/, "")
+      .replace(/\s*[-–—]\d{5,}$/, ""),
+  },
+
+  /*
+   * Leftovers from the cuts above: a separator with nothing on one side of it,
+   * or brackets emptied of their content.
+   */
+  {
+    key: "clean.leftovers",
+    test: /[\(\[]\s*[\)\]]|[-–—|]\s*$|^\s*[-–—|]/,
+    apply: (s) => s
+      .replace(/\s*[\(\[]\s*[\)\]]\s*/g, " ")
+      .replace(/\s*[-–—|]\s*$/, "")
+      .replace(/^\s*[-–—|]\s*/, ""),
+  },
 ];
 
 function cleanFilename(stem) {
@@ -51,8 +146,12 @@ function cleanFilename(stem) {
   for (const rule of CLEANUP_RULES) {
     if (!rule.test.test(text)) continue;
     const next = rule.apply(text).trim();
+    // A rule that would empty the name is skipped rather than applied: an empty
+    // stem loses the file's only identity, and no cut is worth that.
     if (next && next !== text) {
-      changes.push(rule.key);
+      // Two rules share the "clean.site" key -- bracketed and bare -- and the
+      // log should say what happened once, not once per pattern.
+      if (!changes.includes(rule.key)) changes.push(rule.key);
       text = next;
     }
   }
