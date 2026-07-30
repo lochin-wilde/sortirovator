@@ -61,12 +61,13 @@ cd web && python3 -m http.server 8777
 ## Тесты
 
 ```bash
-node tools/test_gate.mjs functions/_middleware.js
-node tools/test_feedback.mjs
+node tools/test_gate.mjs functions/_middleware.js   # контроль доступа
+node tools/test_feedback.mjs                        # приём исправлений
+node tools/test_paths.mjs                           # имена папок в архиве
+node tools/test_translit.mjs                        # латиница -> кириллица
 ```
 
-Контроль доступа и приём исправлений. Оба набора работают без сети, без базы и
-без браузера.
+Все четыре набора работают без сети, без базы и без браузера.
 
 ## Выкладка
 

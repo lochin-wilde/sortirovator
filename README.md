@@ -60,12 +60,13 @@ when deployed to Cloudflare Pages.
 ## Tests
 
 ```bash
-node tools/test_gate.mjs functions/_middleware.js
-node tools/test_feedback.mjs
+node tools/test_gate.mjs functions/_middleware.js   # access control
+node tools/test_feedback.mjs                        # corrections API
+node tools/test_paths.mjs                           # ZIP folder names
+node tools/test_translit.mjs                        # Latin -> Cyrillic
 ```
 
-Access control and the corrections API. Both run without a network, a database
-or a browser.
+All four run without a network, a database or a browser.
 
 ## Deploying
 

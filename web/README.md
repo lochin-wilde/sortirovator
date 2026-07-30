@@ -484,6 +484,52 @@ lookup found nothing: 30% of transliterated names are flagged, with 2.3% of
 Latin names flagged spuriously. That ratio is acceptable for a line of text and
 would not have been acceptable for renaming a file.
 
+#### Quality of the back-conversion
+
+The Latin form is converted to Cyrillic to make a **second search query**, never
+a name. So the standard is not exactness but whether MusicBrainz's fuzzy search
+can work with the result.
+
+Measured over 318 Cyrillic artist and title strings from 19 artists, each
+written out with this project's own `toAscii()` and read back:
+
+| | exact | badly wrong (<0.95) |
+|---|---|---|
+| letter table alone | 66.4% | 27.4% |
+| + "й" recovered from a bare "i" | 72.3% | 19.8% |
+| + Latin version markers left alone | **74.8%** | **16.4%** |
+
+Two systematic faults were behind most of it.
+
+**"й" arrives as "i".** The table already read "ay/oy/ey/uy" as "ай/ой/ей/уй",
+added from filenames where someone wrote "й" as "y" — but `toAscii` writes "й"
+as "i", so this project's own round trip never produced those forms. "Voina",
+"Maika" and "Dai" came back as Воина, Маика, Даи. The replacement is positional
+rather than absolute, because "i" is genuinely ambiguous: Война and Наизнанку
+are indistinguishable to a letter map. Converting a vowel+"i" that ends a word
+or precedes a consonant is wrong sometimes — Наизнанку becomes Найзнанку — and
+wrong less often than leaving it.
+
+**Version markers are Latin even on Russian releases.** "(Izzamuzzic remix)"
+came back as "(Иззамуззиц ремиx)". A bracket containing a known marker is now
+left as it is. Only marked brackets, not all of them: "Южная ночь (Звери vs.
+Nikotin)" has a Cyrillic artist inside the brackets too, and skipping every
+bracket lost it — 74.8% against 73.6%.
+
+What a letter table still cannot do: "э" and "е" both come back as "е" (Поэт →
+Поет), "ё" loses its diaeresis in `toAscii` before the conversion ever starts,
+and a soft sign vanishes entirely (ночь → ноч). These need the word, not the
+letter. They matter less than they look: every one of the 38 titles in
+`tools/test_translit.mjs` still lands within 0.8 similarity of the original,
+which is what a fuzzy search needs.
+
+**A missing record is the more common failure.** A track this was first
+investigated on — "Она танцует под Шадэ" by By Индия, Xcho and МОТ — is not in
+MusicBrainz at all, under any spelling; Xcho and Мот are, the recording is not.
+No amount of transliteration reaches a record that does not exist, and it is
+worth checking which of the two problems is in play before treating a lookup
+failure as a conversion failure.
+
 ## Matching titles
 
 Candidate titles are compared twice: once with version markers stripped, and
