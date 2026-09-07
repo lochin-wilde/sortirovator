@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>   </title>
+<link rel="stylesheet" href="css/styles.css?v=2026.07.30.6">
+<style>
+  /* Small additions specific to this page; everything else comes from
+       styles.css so it matches the main app instead of drifting from it. */
+         .admin-table td, .admin-table th { vertical-align: top; }
+           .admin-status { color: var(--muted); margin: 1rem 0; }
+             .admin-status.error { color: #ff8f8f; }
+             </style>
+             </head>
+             <body>
+             
+             <header class="masthead">
+               <div class="masthead-top">
+                   <h1 data-i18n="admin.title"></h1>
+                       <div class="masthead-controls">
+                             <div class="lang-switch" role="group">
+                                     <button type="button" class="lang-button" data-lang="ru">RU</button>
+                                             <button type="button" class="lang-button" data-lang="en">EN</button>
+                                                   </div>
+                                                         <form method="POST" action="/logout" class="signout-form">
+                                                                 <button type="submit" class="link-button" data-i18n="gate.signout"></button>
+                                                                       </form>
+                                                                           </div>
+                                                                             </div>
+                                                                               <p class="tagline" data-i18n="admin.lead"></p>
+                                                                               </header>
+                                                                               
+                                                                               <main id="admin-main">
+                                                                                 <p><a href="/" class="link-button" data-i18n="admin.back"></a></p>
+                                                                                 
+                                                                                   <p class="admin-status" id="admin-status" data-i18n="admin.loading"></p>
+                                                                                   
+                                                                                     <table class="results admin-table" id="admin-table" hidden>
+                                                                                         <thead>
+                                                                                               <tr>
+                                                                                                       <th data-i18n="admin.col.when"></th>
+                                                                                                               <th data-i18n="admin.col.invite"></th>
+                                                                                                                       <th data-i18n="admin.col.track"></th>
+                                                                                                                               <th data-i18n="admin.col.detected"></th>
+                                                                                                                                       <th data-i18n="admin.col.corrected"></th>
+                                                                                                                                               <th data-i18n="admin.col.bpmKey"></th>
+                                                                                                                                                     </tr>
+                                                                                                                                                         </thead>
+                                                                                                                                                             <tbody id="admin-body"></tbody>
+                                                                                                                                                               </table>
+                                                                                                                                                               
+                                                                                                                                                                 <p><button type="button" class="button" id="admin-refresh" data-i18n="admin.refresh"></button></p>
+                                                                                                                                                                 </main>
+                                                                                                                                                                 
+                                                                                                                                                                 <script src="js/i18n.js?v=2026.07.30.6" defer></script>
+                                                                                                                                                                 <script src="js/admin.js?v=2026.07.30.6" defer></script>
+                                                                                                                                                                 </body>
+                                                                                                                                                                 </html>
+                                                                                                                                                                 
