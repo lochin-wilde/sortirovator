@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.07.30.6";
+const APP_VERSION = "2026.08.09.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -416,11 +416,6 @@ function setFileLabel(text) {
 /* Genre resolution                                                    */
 /* ------------------------------------------------------------------ */
 
-function normalizeGenre(genre, genresMap) {
-  if (!genre) return "Unknown";
-  return genreForTag(genresMap, genre.toLowerCase()) || "Unknown";
-}
-
 /*
  * A category name, made safe to use as one folder inside the ZIP.
  *
@@ -463,179 +458,13 @@ function genreFolderName(genre) {
  * Returns { genre, source } so the log can name where the answer came from.
  */
 async function resolveGenre(context) {
-  const { tags, artist, track, genresMap, options, worker, recordingId } = context;
-
   /*
-   * What the user has already told us wins outright. They are looking at their
-   * own library and we are guessing at it; no lookup should be able to overrule
-   * a correction they made by hand.
+   * The decision itself lives in identify.js, next to the lookups it drives, so
+   * that it can be measured against a real library without a browser. What
+   * stays here is the two things it needs that only the page can supply: the
+   * user's own corrections and the translated labels.
    */
-  const correction = correctionFor(artist, track);
-  if (correction) {
-    return {
-      genre: correction.genre,
-      source: t(correction.scope === "track" ? "genre.fromYouTrack" : "genre.fromYouArtist"),
-    };
-  }
-
-  const tagGenre = tags.genre ? normalizeGenre(tags.genre, genresMap) : "Unknown";
-  const lookupsEnabled = options.useMusicbrainz || options.useDiscogs || Boolean(options.lastfmKey);
-
-  /*
-   * With lookups enabled the file tag is consulted only after the online
-   * sources, never before.
-   *
-   * Trusting a specific-looking file tag outright was tried and does not
-   * survive contact with a real library: Pharoahe Monch's "Simon Says", a 1999
-   * hip-hop record, ships tagged "Dubstep" and was filed under Dubstep, while a
-   * Calvin Harris house track ships tagged "Pop". Whatever wrote those tags is
-   * not a better authority than MusicBrainz or Last.fm, and a careless tag is
-   * indistinguishable from a curated one by inspection.
-   *
-   * With lookups off there is nothing better available, so the tag leads.
-   */
-  if (!lookupsEnabled && tagGenre !== "Unknown") {
-    return { genre: tagGenre, source: 'file tag "' + tags.genre + '"' };
-  }
-
-  /*
-   * Track-specific sources first, artist-level only after they are exhausted.
-   * That ordering is what the worked example demands: MusicBrainz has no
-   * genres on the "Blessings" recording, Last.fm's community tagged the track
-   * itself "Chill House", and the Calvin Harris *artist* entry says
-   * "dance-pop". The artist answer describes a career, not this track, so it
-   * must not outrank a source that actually looked at the track.
-   */
-  if (artist && track) {
-    const remixer = remixerFromTitle(track);
-
-    /*
-     * A remix belongs to whoever made it, and every lookup keyed on the
-     * original artist will say otherwise. This is not a small effect and not a
-     * hypothetical one -- measured against Discogs:
-     *
-     *   Aerosmith - Dream On (Yultron Remix)        -> Blues Rock, Hard Rock
-     *   Fleetwood Mac - Dreams (Dave Winnel Remix)  -> Vocal
-     *
-     * Those are the right answers about the original recordings and useless
-     * answers about the files in hand, which are a dubstep flip and a house
-     * record. So when the title carries a remix marker the original artist is
-     * not consulted at all -- not skipped in favour of a better answer, but
-     * excluded, because its answer is confidently wrong.
-     *
-     * The remix's own release is tried first: Discogs often has it, catalogued
-     * under the remixer with its own style. Only if that fails do we fall back
-     * to what the remixer is generally known for.
-     */
-    if (remixer) {
-      const core = splitTitle(track).core;
-      const fromRemixRelease = options.useDiscogs
-        ? await discogsGenre(remixer, core, genresMap)
-        : null;
-      if (fromRemixRelease) {
-        return {
-          genre: fromRemixRelease.genre,
-          source: 'Discogs style "' + fromRemixRelease.tag + '" for the ' + remixer + ' remix',
-        };
-      }
-      if (options.lastfmKey) {
-        const fromRemixer = await lastfmArtistGenre(remixer, options.lastfmKey, genresMap);
-        if (fromRemixer) {
-          return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer };
-        }
-      }
-      if (options.useMusicbrainz) {
-        const fromRemixerMb = await musicbrainzArtistGenre(remixer, genresMap);
-        if (fromRemixerMb) {
-          return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer };
-        }
-      }
-      /*
-       * Nothing known about the remixer. Falling through to the original artist
-       * from here would reintroduce exactly the Aerosmith answer, so the audio
-       * fallback at the bottom of this function is the better outcome.
-       */
-    } else {
-      /*
-       * Track-level sources first, Discogs ahead of the rest. Its styles are
-       * written per release by collectors, which is finer than anything the
-       * others carry, and it answers where they do not: Last.fm's track.getInfo
-       * now returns an empty tag list for most tracks.
-       */
-      const fromDiscogs = options.useDiscogs
-        ? await discogsGenre(artist, track, genresMap)
-        : null;
-      if (fromDiscogs) {
-        /*
-         * The one place a release year changes the answer, and the only genre
-         * family where it does. Asking two sources costs a rate-limited second,
-         * so it is asked only when the answer is the undivided Hip-Hop bucket --
-         * never for Trap, Boom Bap or anything outside hip-hop.
-         *
-         * A track neither source can date stays in Hip-Hop rather than being
-         * guessed into an era.
-         */
-        let genre = fromDiscogs.genre;
-        let source = 'Discogs style "' + fromDiscogs.tag + '"';
-        if (ERA_SPLIT_GENRES.has(genre)) {
-          const fromMb = await musicbrainzEarliestYear(artist, track);
-          const year = [fromDiscogs.year, fromMb]
-            .filter((y) => typeof y === "number" && y > 0)
-            .reduce((a, b) => Math.min(a, b), Infinity);
-          const known = isFinite(year) ? year : null;
-          const withEra = applyEra(genre, known);
-          if (withEra !== genre) {
-            genre = withEra;
-            source = 'Discogs style "' + fromDiscogs.tag + '", first released ' + known;
-          }
-        }
-        return { genre, source };
-      }
-      if (options.useMusicbrainz) {
-        const fromRecording = await musicbrainzGenre(artist, track, genresMap, recordingId);
-        if (fromRecording) {
-          return { genre: fromRecording.genre, source: 'MusicBrainz recording tag "' + fromRecording.tag + '"' };
-        }
-      }
-      if (options.lastfmKey) {
-        const fromLastfm = await lastfmGenre(artist, track, options.lastfmKey, genresMap);
-        if (fromLastfm) {
-          return { genre: fromLastfm.genre, source: 'Last.fm track tag "' + fromLastfm.tag + '"' };
-        }
-      }
-
-      // Artist-level sources, in measured order of usefulness: Last.fm's artist
-      // tags are much better populated than MusicBrainz's for dance music.
-      if (options.lastfmKey) {
-        const fromLastfmArtist = await lastfmArtistGenre(artist, options.lastfmKey, genresMap);
-        if (fromLastfmArtist) {
-          return { genre: fromLastfmArtist.genre, source: 'Last.fm artist tag "' + fromLastfmArtist.tag + '" (artist-level)' };
-        }
-      }
-      if (options.useMusicbrainz) {
-        const fromArtist = await musicbrainzArtistGenre(artist, genresMap);
-        if (fromArtist) {
-          return { genre: fromArtist.genre, source: 'MusicBrainz artist tag "' + fromArtist.tag + '" (artist-level)' };
-        }
-      }
-    }
-  }
-
-  // Nothing more specific surfaced, so the umbrella tag is better than a guess.
-  if (tagGenre !== "Unknown") {
-    return { genre: tagGenre, source: 'file tag "' + tags.genre + '" (no online source had anything)' };
-  }
-
-  const reply = await workerRequest(worker, { type: "genreFallback" }, [], "genre");
-  if (reply.result && reply.result.genre !== "Unknown") {
-    const f = reply.result.features;
-    return {
-      genre: reply.result.genre,
-      source: "audio analysis (tempo " + f.tempo + ", centroid " + f.centroid +
-        " Hz, bandwidth " + f.bandwidth + " Hz, ZCR " + f.zcr + ")",
-    };
-  }
-  return { genre: "Unknown", source: "no match" };
+  return resolveGenreFrom(context, { correctionFor, t });
 }
 
 /* ------------------------------------------------------------------ */
@@ -718,9 +547,24 @@ async function processFile(file, options, slot) {
     result.maybeTransliterated = true;
   }
 
+  /*
+   * The file's own tags name the artist and the title; the filename only hints
+   * at them. That ordering used to be reversed here -- the filename was parsed
+   * first and the tags consulted only if the parse produced nothing, which
+   * almost never happened, because 98% of names contain a separator. So the
+   * tags were read and thrown away.
+   *
+   * It matters because the filename is genuinely ambiguous: measured on a real
+   * library, 22% of names are "Title - Artist" rather than "Artist - Title",
+   * and parseFilename can only tell the two apart a third of the time. The tags
+   * are not ambiguous, and 88% of the same files carry both fields.
+   *
+   * The filename remains the fallback, and it is still what naming and sorting
+   * work from -- this only decides what gets sent to a lookup.
+   */
   let parsed = parseFilename(tidied.cleaned + fileExtension(file.name));
-  let artist = parsed.artist || tags.artist;
-  let track = parsed.track || tags.title;
+  let artist = usableTag(tags.artist) || parsed.artist;
+  let track = usableTag(tags.title) || parsed.track;
   let stem = tidied.cleaned;
   let recordingId = null;
   // Recorded up front: the results table shows the artist regardless of which
@@ -811,7 +655,7 @@ async function processFile(file, options, slot) {
   if (options.steps.sort) {
     ui.fileStage.textContent = t("stage.genre");
     const resolved = await resolveGenre({
-      tags, artist, track, genresMap: state.genresMap, options, worker, recordingId,
+      tags, artist, track, genresMap: state.genresMap, options, recordingId,
     });
     result.genre = resolved.genre;
     result.genreSource = resolved.source;

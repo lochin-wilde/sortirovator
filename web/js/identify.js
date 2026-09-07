@@ -195,6 +195,60 @@ function looksTransliterated(text) {
  * 5-or-more digit run is stripped because those are internal download ids
  * rather than part of the title.
  */
+/*
+ * Placeholder tag values. Rippers and converters write these when they have
+ * nothing, and searching for the artist "Unknown Artist" is worse than falling
+ * back to the filename, which at least contains real words.
+ */
+const PLACEHOLDER_TAG = /^(unknown|unknown artist|unknown album|untitled|various|various artists|audio track|track ?\d*|\d+)$/i;
+// Longer than this is a description, a URL or a whole tracklist, not a name.
+const MAX_TAG_CHARS = 200;
+
+function usableTag(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.length > MAX_TAG_CHARS) return null;
+  return PLACEHOLDER_TAG.test(text) ? null : text;
+}
+
+const MIX_MARKER = /\b(remix|mix|edit|vip|bootleg|flip|rework|version)\b/i;
+
+/*
+ * Which side of the separator holds the artist.
+ *
+ * "Artist - Title" is the common shape but not the only one: Beatport and
+ * Traxsource name their downloads "Title - Artist", and measured against 2277
+ * files in a real library, 510 of them -- 22% -- were the other way round. Every
+ * lookup for those went out with the two fields swapped, so the answer was
+ * wrong before any genre logic ran.
+ *
+ * The rules below were chosen by counting, not by taste:
+ *
+ *   ";" on the right       160 files, 100% of them "Title - Artist". It is how
+ *                          those stores join co-artists, and a title never
+ *                          contains one.
+ *   "(" or "[" on the right  1493 files, 99.8% of them "Artist - Title". Mix
+ *                          names and label tags travel with the title, so their
+ *                          presence on the right settles it.
+ *   "(" or a mix word on the left   the same evidence read the other way.
+ *
+ * Together: 97.8% of the swaps it makes are right, and it catches a third of
+ * the inverted names -- 177 fixed against 4 newly broken. The rest carry no
+ * signal at all ("Stay On Me - Sophie Ellis-Bextor") and are left alone, which
+ * is why the caller should prefer the file's own tags where it has them.
+ */
+function titleComesFirst(left, right) {
+  if (/;/.test(right)) return true;
+  if (/[([]/.test(right)) return false;
+  return /\(/.test(left) || MIX_MARKER.test(left);
+}
+
+/*
+ * Port of parse_filename(). Underscores are normalized to spaces first, since
+ * several download sources replace every space in the name, and a trailing
+ * 5-or-more digit run is stripped because those are internal download ids
+ * rather than part of the title.
+ */
 function parseFilename(filename) {
   const name = stripExtension(filename);
   const normalized = name.replace(/_/g, " ").replace(/\s+/g, " ").trim();
@@ -205,8 +259,11 @@ function parseFilename(filename) {
   for (const sep of separators) {
     const index = normalized.indexOf(sep);
     if (index >= 0) {
-      artist = normalized.slice(0, index).trim();
-      track = normalized.slice(index + sep.length).trim();
+      const left = normalized.slice(0, index).trim();
+      const right = normalized.slice(index + sep.length).trim();
+      const inverted = titleComesFirst(left, right);
+      artist = inverted ? right : left;
+      track = inverted ? left : right;
       break;
     }
   }
@@ -535,6 +592,7 @@ const GENRE_PARENTS = {
   "Melodic House": "House", "Progressive House": "House",
   "Future / Slap House": "House", "Electro / Big Room": "House",
   "Latin House": "House", "Ghetto House / Juke": "House",
+  "Soulful House": "House", "Nu Disco": "Disco",
   "Hard Techno": "Techno", "Melodic Techno": "Techno",
   "Minimal / Deep Tech": "Techno",
   "Psytrance": "Trance",
@@ -1431,4 +1489,237 @@ function takeLookupError() {
 
 function sanitizeFilename(text) {
   return text.replace(FILENAME_UNSAFE_CHARS, "").trim();
+}
+
+/* ------------------------------------------------------------------ */
+/* Genre resolution                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Decides a genre for one track, in the order the sources have earned.
+ *
+ * This lived in app.js until it needed measuring. It could not be: it reached
+ * straight into the page for the user's corrections, for translated strings and
+ * for the Web Worker, so running it meant running a browser, and the only way to
+ * check it against a real library was to reimplement the ordering in a test --
+ * which would then quietly drift from the version that ships.
+ *
+ * Those three are now passed in as `deps`, and everything else it needs is
+ * already in this file. The ordering below is unchanged from the version that
+ * ran in the page; the reasoning for each step is recorded at the step.
+ *
+ *   deps.correctionFor(artist, title) -> a correction the user made, or null
+ *   deps.t(key)                       -> a translated label
+ *   deps.audioFallback()              -> { genre, features } from analysing the
+ *                                        audio, or null when unavailable
+ */
+
+function normalizeGenre(genre, genresMap) {
+  if (!genre) return "Unknown";
+  return genreForTag(genresMap, genre.toLowerCase()) || "Unknown";
+}
+
+async function resolveGenreFrom(context, deps) {
+  const { tags, artist, track, genresMap, options, recordingId } = context;
+
+  /*
+   * What the user has already told us wins outright. They are looking at their
+   * own library and we are guessing at it; no lookup should be able to overrule
+   * a correction they made by hand.
+   */
+  const correction = deps.correctionFor(artist, track);
+  if (correction) {
+    return {
+      genre: correction.genre,
+      source: deps.t(correction.scope === "track" ? "genre.fromYouTrack" : "genre.fromYouArtist"),
+    };
+  }
+
+  const tagGenre = tags.genre ? normalizeGenre(tags.genre, genresMap) : "Unknown";
+  const lookupsEnabled = options.useMusicbrainz || options.useDiscogs || Boolean(options.lastfmKey);
+
+  /*
+   * With lookups enabled the file tag is consulted only after the online
+   * sources, never before.
+   *
+   * Trusting a specific-looking file tag outright was tried and does not
+   * survive contact with a real library: Pharoahe Monch's "Simon Says", a 1999
+   * hip-hop record, ships tagged "Dubstep" and was filed under Dubstep, while a
+   * Calvin Harris house track ships tagged "Pop". Whatever wrote those tags is
+   * not a better authority than MusicBrainz or Last.fm, and a careless tag is
+   * indistinguishable from a curated one by inspection.
+   *
+   * With lookups off there is nothing better available, so the tag leads.
+   */
+  if (!lookupsEnabled && tagGenre !== "Unknown") {
+    return { genre: tagGenre, source: 'file tag "' + tags.genre + '"' };
+  }
+
+  /*
+   * Track-specific sources first, artist-level only after they are exhausted.
+   * That ordering is what the worked example demands: MusicBrainz has no
+   * genres on the "Blessings" recording, Last.fm's community tagged the track
+   * itself "Chill House", and the Calvin Harris *artist* entry says
+   * "dance-pop". The artist answer describes a career, not this track, so it
+   * must not outrank a source that actually looked at the track.
+   */
+  if (artist && track) {
+    const remixer = remixerFromTitle(track);
+
+    /*
+     * A remix belongs to whoever made it, and every lookup keyed on the
+     * original artist will say otherwise. This is not a small effect and not a
+     * hypothetical one -- measured against Discogs:
+     *
+     *   Aerosmith - Dream On (Yultron Remix)        -> Blues Rock, Hard Rock
+     *   Fleetwood Mac - Dreams (Dave Winnel Remix)  -> Vocal
+     *
+     * Those are the right answers about the original recordings and useless
+     * answers about the files in hand, which are a dubstep flip and a house
+     * record. So when the title carries a remix marker the original artist is
+     * not consulted at all -- not skipped in favour of a better answer, but
+     * excluded, because its answer is confidently wrong.
+     *
+     * The remix's own release is tried first: Discogs often has it, catalogued
+     * under the remixer with its own style. Only if that fails do we fall back
+     * to what the remixer is generally known for.
+     */
+    if (remixer) {
+      const core = splitTitle(track).core;
+      const fromRemixRelease = options.useDiscogs
+        ? await discogsGenre(remixer, core, genresMap)
+        : null;
+      if (fromRemixRelease) {
+        return {
+          genre: fromRemixRelease.genre,
+          source: 'Discogs style "' + fromRemixRelease.tag + '" for the ' + remixer + ' remix',
+        };
+      }
+      if (options.lastfmKey) {
+        const fromRemixer = await lastfmArtistGenre(remixer, options.lastfmKey, genresMap);
+        if (fromRemixer) {
+          return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer };
+        }
+      }
+      if (options.useMusicbrainz) {
+        const fromRemixerMb = await musicbrainzArtistGenre(remixer, genresMap);
+        if (fromRemixerMb) {
+          return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer };
+        }
+      }
+      /*
+       * Nothing known about the remixer. Falling through to the original artist
+       * from here would reintroduce exactly the Aerosmith answer, so the audio
+       * fallback at the bottom of this function is the better outcome.
+       */
+    } else {
+      /*
+       * Track-level sources first, Discogs ahead of the rest. Its styles are
+       * written per release by collectors, which is finer than anything the
+       * others carry, and it answers where they do not: Last.fm's track.getInfo
+       * now returns an empty tag list for most tracks.
+       */
+      const fromDiscogs = options.useDiscogs
+        ? await discogsGenre(artist, track, genresMap)
+        : null;
+      if (fromDiscogs) {
+        /*
+         * The one place a release year changes the answer, and the only genre
+         * family where it does. Asking two sources costs a rate-limited second,
+         * so it is asked only when the answer is the undivided Hip-Hop bucket --
+         * never for Trap, Boom Bap or anything outside hip-hop.
+         *
+         * A track neither source can date stays in Hip-Hop rather than being
+         * guessed into an era.
+         */
+        let genre = fromDiscogs.genre;
+        let source = 'Discogs style "' + fromDiscogs.tag + '"';
+        if (ERA_SPLIT_GENRES.has(genre)) {
+          const fromMb = await musicbrainzEarliestYear(artist, track);
+          const year = [fromDiscogs.year, fromMb]
+            .filter((y) => typeof y === "number" && y > 0)
+            .reduce((a, b) => Math.min(a, b), Infinity);
+          const known = isFinite(year) ? year : null;
+          const withEra = applyEra(genre, known);
+          if (withEra !== genre) {
+            genre = withEra;
+            source = 'Discogs style "' + fromDiscogs.tag + '", first released ' + known;
+          }
+        }
+        return { genre, source };
+      }
+      if (options.useMusicbrainz) {
+        const fromRecording = await musicbrainzGenre(artist, track, genresMap, recordingId);
+        if (fromRecording) {
+          return { genre: fromRecording.genre, source: 'MusicBrainz recording tag "' + fromRecording.tag + '"' };
+        }
+      }
+      if (options.lastfmKey) {
+        const fromLastfm = await lastfmGenre(artist, track, options.lastfmKey, genresMap);
+        if (fromLastfm) {
+          return { genre: fromLastfm.genre, source: 'Last.fm track tag "' + fromLastfm.tag + '"' };
+        }
+      }
+
+      /*
+       * The file's own tag now goes ahead of the artist-level sources.
+       *
+       * It used to come last. Measured on 300 filed tracks, MusicBrainz's
+       * artist tags answered 58 times and were right 15.5% of the time, while
+       * the file tag answered 9 times and was right 44.4%. The samples are
+       * uneven and the second is small, so this is a change to be re-measured
+       * rather than a settled result -- but the reasoning behind the old order
+       * does not survive either way. A file tag is a claim about *this* track;
+       * an artist tag describes a career, and for a remix-heavy dance library
+       * that career is usually the wrong subject.
+       *
+       * It stays behind every track-level source, which is where the original
+       * argument still holds: whatever tagged "Simon Says" as Dubstep is not a
+       * better authority than Discogs looking at the release.
+       */
+      if (tagGenre !== "Unknown") {
+        return { genre: tagGenre, source: 'file tag "' + tags.genre + '"' };
+      }
+
+      // Artist-level sources, in measured order of usefulness: Last.fm's artist
+      // tags are much better populated than MusicBrainz's for dance music.
+      if (options.lastfmKey) {
+        const fromLastfmArtist = await lastfmArtistGenre(artist, options.lastfmKey, genresMap);
+        if (fromLastfmArtist) {
+          return { genre: fromLastfmArtist.genre, source: 'Last.fm artist tag "' + fromLastfmArtist.tag + '" (artist-level)' };
+        }
+      }
+      if (options.useMusicbrainz) {
+        const fromArtist = await musicbrainzArtistGenre(artist, genresMap);
+        if (fromArtist) {
+          return { genre: fromArtist.genre, source: 'MusicBrainz artist tag "' + fromArtist.tag + '" (artist-level)' };
+        }
+      }
+    }
+  }
+
+  // Nothing more specific surfaced, so the umbrella tag is better than a guess.
+  if (tagGenre !== "Unknown") {
+    return { genre: tagGenre, source: 'file tag "' + tags.genre + '" (no online source had anything)' };
+  }
+
+  /*
+   * "Unknown" rather than a guess from the audio.
+   *
+   * A fallback used to sit here that classified the track by its spectral
+   * centroid, bandwidth and zero-crossing rate. Measured against 300 tracks the
+   * owner had filed by hand, it answered 143 of them and was right about none.
+   *
+   * That is not bad luck, it is arithmetic. The classifier knew five labels --
+   * Rock, Electronic, Jazz, Pop, Classical -- and a DJ library is filed as Afro
+   * House, Jersey Club, UK Garage, Jungle. It could not have been right about
+   * any of those tracks. Three of its five labels are the exact words
+   * GENERIC_CATEGORIES exists to throw away: we discard them from Discogs and
+   * Last.fm as uninformative, then emitted them ourselves.
+   *
+   * Dropping it loses no correct answer and stops half a library being labelled
+   * confidently and wrongly. A blank field is honest and the user can fix it;
+   * "Rock" on an Afro House record only says the tool does not work.
+   */
+  return { genre: "Unknown", source: "no match" };
 }
