@@ -21,7 +21,6 @@ importScripts("dsp.js?v=" + WORKER_VERSION, "loudness.js?v=" + WORKER_VERSION);
 // The Python version analyses the whole file. Capping analysis keeps a batch
 // usable in a browser; BPM and key are both stable well inside this window.
 const ANALYSIS_MAX_SECONDS = 120;
-const GENRE_ANALYSIS_SECONDS = 60; // librosa.load(duration=60) in the Python code
 const GENRE_ANALYSIS_RATE = 22050; // librosa.load default sample rate
 
 let session = null;
@@ -36,9 +35,6 @@ self.onmessage = (event) => {
     switch (msg.type) {
       case "analyze":
         handleAnalyze(msg);
-        break;
-      case "genreFallback":
-        handleGenreFallback();
         break;
       case "render":
         handleRender(msg);
@@ -119,49 +115,6 @@ function handleAnalyze(msg) {
   }
 
   self.postMessage({ type: "analyzed", result });
-}
-
-/*
- * Nearest-centroid genre classification, reached only when the tag, MusicBrainz
- * and Last.fm lookups have all failed -- the same position it occupies in the
- * Python process_file() chain.
- *
- * The Python version feeds this stage a 22050 Hz mono signal truncated to 60
- * seconds, including for its tempo feature, which is a *different* input from
- * the BPM reported in the results table. Reproducing that split matters: the
- * centroid distances were tuned against these exact numbers.
- */
-function handleGenreFallback() {
-  if (!session || !session.mono22k) {
-    self.postMessage({ type: "genre", result: null });
-    return;
-  }
-  report("genre", 0);
-  const limit = Math.min(session.mono22k.length, GENRE_ANALYSIS_SECONDS * GENRE_ANALYSIS_RATE);
-  const excerpt = session.mono22k.subarray(0, limit);
-
-  const features = spectralFeatures(excerpt, GENRE_ANALYSIS_RATE, (p) => report("genre", p * 0.4));
-  const tempo = detectBpm(excerpt, GENRE_ANALYSIS_RATE, (p) => report("genre", 0.4 + p * 0.6)) || 120;
-  const classified = classifyByCentroid({
-    tempo,
-    centroid: features.centroid,
-    bandwidth: features.bandwidth,
-    zcr: features.zcr,
-  });
-
-  self.postMessage({
-    type: "genre",
-    result: {
-      genre: classified.genre,
-      distance: Math.round(classified.distance * 100) / 100,
-      features: {
-        tempo,
-        centroid: Math.round(features.centroid),
-        bandwidth: Math.round(features.bandwidth),
-        zcr: Math.round(features.zcr * 10000) / 10000,
-      },
-    },
-  });
 }
 
 /*

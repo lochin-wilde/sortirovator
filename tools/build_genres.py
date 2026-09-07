@@ -60,10 +60,17 @@ RULES = [
     (r"\btech ?house\b", "Tech House"),
     (r"\bbass house\b", "Bass House"),
     (r"\b(g-house|fidget house|jackin'? house|speed house|hardbass|bouncy house)\b", "Bass House"),
-    (r"\b(disco house|funky house|filter house|french house|nu ?-? ?disco|"
-     r"jackin|piano house|italo house|diva house|garage house|soulful house|"
+    # Split out of Funky / Disco House after measuring against a real library:
+    # 153 nu-disco tracks and 38 soulful-house tracks had been filed together
+    # with funky house, and their owner keeps them in separate folders because
+    # they are separate rooms of a night. The rules sit above the Funky rule so
+    # they win, since the first match is the one that counts.
+    (r"\b(nu ?-? ?disco|nudisco)\b", "Nu Disco"),
+    (r"\b(soulful house|deep soul house|gospel house)\b", "Soulful House"),
+    (r"\b(disco house|funky house|filter house|french house|"
+     r"jackin|piano house|italo house|diva house|garage house|"
      r"deep disco house|deep funk house|saxophone house|electro swing|"
-     r"vocal house|deep vocal house|deep soul house|jazz house|lounge house)\b", "Funky / Disco House"),
+     r"vocal house|deep vocal house|jazz house|lounge house)\b", "Funky / Disco House"),
     (r"\b(slap house|brazilian bass|future house|tropical house|deep tropical house|"
      r"swedish tropical house|vinahouse)\b", "Future / Slap House"),
     (r"\b(melodic house|organic house|balearic|float house|beach house|chill house|"
@@ -107,6 +114,10 @@ RULES = [
     (r"\b(jungle|ragga jungle|modern jungle)\b", "Jungle"),
     (r"\b(drum ?& ?bass|drum and bass|dnb|jump up|hardstep|dancefloor dnb|"
      r"drumstep|sambass)\b", "Drum & Bass"),
+
+    # ---- Grime ------------------------------------------------------------------
+    # Read before the hip-hop rules, which used to swallow it whole.
+    (r"\b(grime|instrumental grime|eskibeat|grimewave)\b", "Grime"),
 
     # ---- Dubstep / bass --------------------------------------------------------
     (r"\b(riddim|riddim dubstep)\b", "Riddim"),
@@ -180,7 +191,9 @@ def main():
         "funk carioca": "Baile Funk", "funk brasileiro": "Baile Funk",
         "liquid drum and bass": "Liquid DnB", "liquid dnb": "Liquid DnB",
         "psytrance": "Psytrance", "indie dance": "Indie Dance",
-        "nu disco": "Funky / Disco House", "afro tech": "Afro House",
+        "nu disco": "Nu Disco", "nu-disco": "Nu Disco",
+        "soulful house": "Soulful House", "grime": "Grime",
+        "afro tech": "Afro House",
         "jersey club": "Jersey Club", "amapiano": "Amapiano",
         "afro house": "Afro House", "3-step": "Afro House",
         "melodic house & techno": "Melodic House",

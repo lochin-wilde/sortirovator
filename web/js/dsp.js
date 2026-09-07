@@ -119,22 +119,6 @@ function readFrameCentered(y, frameIndex, frameLen, hop, out) {
   }
 }
 
-// librosa.feature.zero_crossing_rate pads with mode="edge" instead of zeros.
-function readFrameCenteredEdge(y, frameIndex, frameLen, hop, out) {
-  const start = frameIndex * hop - (frameLen >> 1);
-  const n = y.length;
-  if (n === 0) {
-    out.fill(0);
-    return;
-  }
-  for (let i = 0; i < frameLen; i++) {
-    let idx = start + i;
-    if (idx < 0) idx = 0;
-    else if (idx >= n) idx = n - 1;
-    out[i] = y[idx];
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* Mel filterbank (Slaney scale + Slaney normalization)                */
 /* ------------------------------------------------------------------ */
@@ -208,87 +192,6 @@ function buildMelFilterbank(sr, nFft, nMels) {
 /* ------------------------------------------------------------------ */
 /* Spectral features for the nearest-centroid genre fallback           */
 /* ------------------------------------------------------------------ */
-
-/*
- * Mean spectral centroid, spectral bandwidth (p=2) and zero-crossing rate,
- * matching librosa.feature.* defaults. The Python version calls these on a
- * 22050 Hz mono signal truncated to the first 60 seconds, so the caller must
- * pass exactly that signal for the centroid distances to stay comparable to
- * _GENRE_CENTROIDS.
- */
-function spectralFeatures(y, sr, onProgress) {
-  const nFft = 2048;
-  const hop = 512;
-  const nBins = (nFft >> 1) + 1;
-  const frames = frameCountCentered(y.length, hop);
-  if (frames <= 0) return { centroid: 0, bandwidth: 0, zcr: 0 };
-
-  const window = hannPeriodic(nFft);
-  const fft = getFFT(nFft);
-  const re = new Float64Array(nFft);
-  const im = new Float64Array(nFft);
-  const frame = new Float64Array(nFft);
-  const mag = new Float64Array(nBins);
-  const freqs = new Float64Array(nBins);
-  for (let i = 0; i < nBins; i++) freqs[i] = (i * sr) / nFft;
-
-  let centroidSum = 0;
-  let bandwidthSum = 0;
-
-  for (let t = 0; t < frames; t++) {
-    readFrameCentered(y, t, nFft, hop, frame);
-    for (let i = 0; i < nFft; i++) {
-      re[i] = frame[i] * window[i];
-      im[i] = 0;
-    }
-    fft.transform(re, im, false);
-
-    let magSum = 0;
-    for (let k = 0; k < nBins; k++) {
-      const m = Math.hypot(re[k], im[k]);
-      mag[k] = m;
-      magSum += m;
-    }
-    if (magSum <= 1e-20) continue; // silent frame contributes 0, as in librosa
-
-    let c = 0;
-    for (let k = 0; k < nBins; k++) c += freqs[k] * (mag[k] / magSum);
-    let variance = 0;
-    for (let k = 0; k < nBins; k++) {
-      const d = freqs[k] - c;
-      variance += (mag[k] / magSum) * d * d;
-    }
-    centroidSum += c;
-    bandwidthSum += Math.sqrt(variance);
-
-    if (onProgress && (t & 511) === 0) onProgress(t / frames);
-  }
-
-  // Zero-crossing rate uses its own framing with edge padding.
-  const zcrFrameLen = 2048;
-  const zcrFrames = frameCountCentered(y.length, hop);
-  const zframe = new Float64Array(zcrFrameLen);
-  let zcrSum = 0;
-  for (let t = 0; t < zcrFrames; t++) {
-    readFrameCenteredEdge(y, t, zcrFrameLen, hop, zframe);
-    let crossings = 0;
-    // librosa's zero_crossings(pad=True) compares the first sample against 0.
-    let prevNeg = zframe[0] < 0;
-    if (prevNeg) crossings++;
-    for (let i = 1; i < zcrFrameLen; i++) {
-      const neg = zframe[i] < 0;
-      if (neg !== prevNeg) crossings++;
-      prevNeg = neg;
-    }
-    zcrSum += crossings / zcrFrameLen;
-  }
-
-  return {
-    centroid: centroidSum / frames,
-    bandwidth: bandwidthSum / frames,
-    zcr: zcrSum / zcrFrames,
-  };
-}
 
 /* ------------------------------------------------------------------ */
 /* Onset strength envelope                                             */
@@ -946,32 +849,3 @@ function pearson(a, b) {
 /* Nearest-centroid genre classification                               */
 /* ------------------------------------------------------------------ */
 
-// Verbatim from the Python version -- these are hand-tuned reference points,
-// not a trained model, so they port across exactly.
-const GENRE_CENTROIDS = {
-  "Hip-Hop": { tempo: 90, centroid: 2200, bandwidth: 2200, zcr: 0.07 },
-  Electronic: { tempo: 135, centroid: 3100, bandwidth: 2600, zcr: 0.13 },
-  Rock: { tempo: 130, centroid: 2600, bandwidth: 2500, zcr: 0.11 },
-  Pop: { tempo: 105, centroid: 2300, bandwidth: 2300, zcr: 0.09 },
-  Jazz: { tempo: 110, centroid: 1900, bandwidth: 1900, zcr: 0.05 },
-  Classical: { tempo: 90, centroid: 1500, bandwidth: 1600, zcr: 0.03 },
-};
-const GENRE_FEATURE_SCALES = { tempo: 40, centroid: 700, bandwidth: 600, zcr: 0.05 };
-
-function classifyByCentroid(features) {
-  let bestGenre = "Unknown";
-  let bestDistance = Infinity;
-  for (const genre of Object.keys(GENRE_CENTROIDS)) {
-    const centroid = GENRE_CENTROIDS[genre];
-    let distance = 0;
-    for (const key of Object.keys(centroid)) {
-      const d = (features[key] - centroid[key]) / GENRE_FEATURE_SCALES[key];
-      distance += d * d;
-    }
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestGenre = genre;
-    }
-  }
-  return { genre: bestGenre, distance: bestDistance };
-}
