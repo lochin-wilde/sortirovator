@@ -1320,3 +1320,24 @@ probeEnvironment();
  * never be the reason the app is slow to become usable.
  */
 flushFeedback();
+
+/*
+ * Reveals the admin link for a session whose role is admin. Purely cosmetic:
+  * the check that actually protects the data lives in
+   * functions/api/admin/feedback.js, which re-verifies the role itself rather
+    * than trusting anything the client sends or hides. Failing silently here --
+     * no admin link on a network error -- is the safe direction, since the worst
+      * outcome is an admin having to reload rather than a tester seeing a link
+       * that would 403 them anyway.
+        */
+(async () => {
+    const adminLink = el("admin-link");
+    if (!adminLink) return;
+    try {
+          const res = await fetch("/api/whoami", { credentials: "same-origin" });
+          if (!res.ok) return;
+          const info = await res.json();
+          if (info && info.role === "admin") adminLink.hidden = false;
+    } catch (e) { /* no gate locally, or offline -- link stays hidden either way */ }
+})();
+
