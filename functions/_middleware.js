@@ -20,6 +20,10 @@
  *
  *        SESSION_SECRET   32+ random bytes, e.g. `openssl rand -base64 32`
  *        INVITE_CODES     JSON: {"<code>": "<who it went to>", ...}
+ *                          A value can also be {"label": "<who>", "role": "admin"}
+ *                          for anyone who should reach /api/admin/*. Anything
+ *                          else -- a bare string, or role missing/unrecognised --
+ *                          is role "user".
  *
  *   3. Revoke one tester by deleting their entry and redeploying. Revoke
  *      everyone at once by rotating SESSION_SECRET, which invalidates every
@@ -42,15 +46,15 @@ const LOGOUT_PATH = "/logout";
 const encoder = new TextEncoder();
 
 function base64url(bytes) {
-  let binary = "";
-  for (const b of new Uint8Array(bytes)) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    let binary = "";
+    for (const b of new Uint8Array(bytes)) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 async function hmac(secret, message) {
-  const key = await crypto.subtle.importKey(
-    "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return base64url(await crypto.subtle.sign("HMAC", key, encoder.encode(message)));
+    const key = await crypto.subtle.importKey(
+          "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    return base64url(await crypto.subtle.sign("HMAC", key, encoder.encode(message)));
 }
 
 /*
@@ -59,10 +63,10 @@ async function hmac(secret, message) {
  * guessed correctly -- enough, over many attempts, to reconstruct it.
  */
 function equalsConstantTime(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+    if (a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return diff === 0;
 }
 
 /*
@@ -71,7 +75,7 @@ function equalsConstantTime(a, b) {
  * The label is whatever the owner wrote next to a code in INVITE_CODES -- a
  * person's name, in practice, and in this project's case a Russian one. An
  * earlier version removed everything outside `\w`, which is ASCII-only, so
- * "Ваня" became the empty string and every correction that tester made arrived
+ * "the tester's Russian name" became the empty string and every correction that tester made arrived
  * unattributed. The label exists precisely to answer "who said this", so
  * silently discarding it defeated the feature it feeds.
  *
@@ -85,53 +89,60 @@ function equalsConstantTime(a, b) {
  * unchanged, so sessions issued before this change keep working.
  */
 function encodeLabel(label) {
-  return encodeURIComponent(String(label)).replace(/\./g, "%2E");
+    return encodeURIComponent(String(label)).replace(/\./g, "%2E");
 }
 
 function decodeLabel(encoded) {
-  try {
-    return decodeURIComponent(encoded);
-  } catch (e) {
-    // Malformed escapes cannot come from encodeLabel, so this is a token that
-    // was tampered with -- but its signature was already verified, so the safe
-    // reading is "a label we cannot interpret", not "no session".
-    return "";
-  }
+    try {
+          return decodeURIComponent(encoded);
+    } catch (e) {
+          // Malformed escapes cannot come from encodeLabel, so this is a token that
+      // was tampered with -- but its signature was already verified, so the safe
+      // reading is "a label we cannot interpret", not "no session".
+      return "";
+    }
 }
 
-async function issueSession(secret, label) {
-  const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  const payload = `${expires}.${encodeLabel(label)}`;
-  return `${payload}.${await hmac(secret, payload)}`;
+async function issueSession(secret, label, role) {
+    const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+    const payload = `${expires}.${encodeLabel(label)}.${role}`;
+    return `${payload}.${await hmac(secret, payload)}`;
 }
 
 /*
- * Returns the label the session was issued to, or null if the token is not
- * valid. The label rather than a boolean, because routes behind this need to
- * know *whose* session it is -- /api/feedback records which tester a correction
- * came from -- and having them re-parse the cookie themselves would invite one
- * of them to read the label without checking the signature first.
+ * Returns { label, role } the session was issued to, or null if the token is
+ * not valid. Not just a boolean, because routes behind this need to know
+ * *whose* session it is -- /api/feedback records which tester a correction
+ * came from -- and *what* it can do -- /api/admin/* checks the role -- and
+ * having them re-parse the cookie themselves would invite one of them to read
+ * either without checking the signature first.
  *
- * A label is only ever returned after the signature has been verified, so a
+ * Neither field is ever returned before the signature has been verified, so a
  * caller cannot accidentally trust an unverified one.
  */
-async function sessionLabel(secret, token) {
-  if (!token) return null;
-  const cut = token.lastIndexOf(".");
-  if (cut < 0) return null;
-  const payload = token.slice(0, cut);
-  const signature = token.slice(cut + 1);
+async function sessionInfo(secret, token) {
+    if (!token) return null;
+    const cut = token.lastIndexOf(".");
+    if (cut < 0) return null;
+    const payload = token.slice(0, cut);
+    const signature = token.slice(cut + 1);
 
   const expected = await hmac(secret, payload);
-  if (!equalsConstantTime(signature, expected)) return null;
+    if (!equalsConstantTime(signature, expected)) return null;
 
   // issueSession() escapes dots in the label, so the payload splits cleanly.
-  const [rawExpires, label] = payload.split(".");
-  const expires = Number(rawExpires);
-  if (!Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) {
-    return null;
-  }
-  return label ? decodeLabel(label) : "";
+  const [rawExpires, label, role] = payload.split(".");
+    const expires = Number(rawExpires);
+    if (!Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) {
+          return null;
+    }
+    return {
+          label: label ? decodeLabel(label) : "",
+          // Sessions issued before roles existed carry no third field. Reading that
+          // as "user" rather than rejecting the token keeps testers signed in
+          // through the upgrade instead of forcing everyone to log in again.
+          role: role === "admin" ? "admin" : "user",
+    };
 }
 
 /*
@@ -154,7 +165,7 @@ const RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
 const RATE_LIMIT_MAX_FAILURES = 10;
 
 function clientAddress(request) {
-  // Set by Cloudflare on every request that reaches a Function; absent only
+    // Set by Cloudflare on every request that reaches a Function; absent only
   // when running the middleware outside their network, as the tests do.
   return request.headers.get("CF-Connecting-IP") || "";
 }
@@ -171,227 +182,245 @@ function clientAddress(request) {
  * closed protects the app, this failing closed would only deny it.
  */
 async function loginRetryDelay(db, ip) {
-  if (!db || !ip) return 0;
-  const cutoff = Math.floor(Date.now() / 1000) - RATE_LIMIT_WINDOW_SECONDS;
-  try {
-    const row = await db
-      .prepare("SELECT COUNT(*) AS failures, MIN(at) AS oldest FROM login_attempts WHERE ip = ? AND at > ?")
-      .bind(ip, cutoff)
-      .first();
-    const failures = (row && row.failures) || 0;
-    if (failures < RATE_LIMIT_MAX_FAILURES) return 0;
-    // Measured from the oldest failure still inside the window, so the block
-    // lifts gradually rather than resetting on every further attempt.
-    const oldest = (row && row.oldest) || cutoff;
-    return Math.max(1, oldest + RATE_LIMIT_WINDOW_SECONDS - Math.floor(Date.now() / 1000));
-  } catch (e) {
-    return 0;
-  }
+    if (!db || !ip) return 0;
+    const cutoff = Math.floor(Date.now() / 1000) - RATE_LIMIT_WINDOW_SECONDS;
+    try {
+          const row = await db
+            .prepare("SELECT COUNT(*) AS failures, MIN(at) AS oldest FROM login_attempts WHERE ip = ? AND at > ?")
+            .bind(ip, cutoff)
+            .first();
+          const failures = (row && row.failures) || 0;
+          if (failures < RATE_LIMIT_MAX_FAILURES) return 0;
+          // Measured from the oldest failure still inside the window, so the block
+      // lifts gradually rather than resetting on every further attempt.
+      const oldest = (row && row.oldest) || cutoff;
+          return Math.max(1, oldest + RATE_LIMIT_WINDOW_SECONDS - Math.floor(Date.now() / 1000));
+    } catch (e) {
+          return 0;
+    }
 }
 
 async function recordLoginFailure(db, ip) {
-  if (!db || !ip) return;
-  const now = Math.floor(Date.now() / 1000);
-  try {
-    await db.batch([
-      db.prepare("INSERT INTO login_attempts (ip, at) VALUES (?, ?)").bind(ip, now),
-      // Old rows are cleared on the way past rather than by a scheduled job,
-      // which this project has nowhere to put.
-      db.prepare("DELETE FROM login_attempts WHERE at <= ?")
-        .bind(now - RATE_LIMIT_WINDOW_SECONDS),
-    ]);
-  } catch (e) { /* see loginRetryDelay: a failure to record must not deny login */ }
+    if (!db || !ip) return;
+    const now = Math.floor(Date.now() / 1000);
+    try {
+          await db.batch([
+                  db.prepare("INSERT INTO login_attempts (ip, at) VALUES (?, ?)").bind(ip, now),
+                  // Old rows are cleared on the way past rather than by a scheduled job,
+                  // which this project has nowhere to put.
+                  db.prepare("DELETE FROM login_attempts WHERE at <= ?")
+                    .bind(now - RATE_LIMIT_WINDOW_SECONDS),
+                ]);
+    } catch (e) { /* see loginRetryDelay: a failure to record must not deny login */ }
 }
 
 async function clearLoginFailures(db, ip) {
-  if (!db || !ip) return;
-  try {
-    await db.prepare("DELETE FROM login_attempts WHERE ip = ?").bind(ip).run();
-  } catch (e) { /* harmless: the rows expire from the window on their own */ }
+    if (!db || !ip) return;
+    try {
+          await db.prepare("DELETE FROM login_attempts WHERE ip = ?").bind(ip).run();
+    } catch (e) { /* harmless: the rows expire from the window on their own */ }
 }
 
 function readCookie(request, name) {
-  const header = request.headers.get("Cookie") || "";
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) return rest.join("=");
-  }
-  return null;
+    const header = request.headers.get("Cookie") || "";
+    for (const part of header.split(";")) {
+          const [key, ...rest] = part.trim().split("=");
+          if (key === name) return rest.join("=");
+    }
+    return null;
 }
 
 function loginPage(message) {
-  const notice = message
-    ? `<p class="error">${message}</p>`
-    : "";
-  return `<!doctype html>
-<html lang="ru"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>Музыкальный сортир — закрытое тестирование</title>
-<style>
-  :root { color-scheme: dark; }
-  body { margin:0; min-height:100vh; display:grid; place-items:center;
-         background:#111318; color:#e8eaf0;
-         font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-  form { width:min(92vw,26rem); padding:2rem; border:1px solid #262a35;
-         border-radius:14px; background:#181b22; }
-  h1 { margin:0 0 .5rem; font-size:1.4rem; }
-  p { margin:0 0 1.25rem; color:#9aa2b4; }
-  .error { color:#ff8f8f; }
-  input { width:100%; box-sizing:border-box; padding:.75rem .9rem; font-size:1rem;
-          letter-spacing:.08em; background:#0e1015; color:#e8eaf0;
-          border:1px solid #2c3140; border-radius:9px; }
-  button { margin-top:.85rem; width:100%; padding:.75rem; font-size:1rem;
-           font-weight:600; color:#fff; background:#5b7cfa; border:0;
-           border-radius:9px; cursor:pointer; }
-  button:hover { background:#6d8bff; }
-</style></head>
-<body>
-  <form method="POST">
-    <h1>Закрытое тестирование</h1>
-    <p>«Музыкальный сортир» пока доступен по приглашениям. Введите выданный код.</p>
-    ${notice}
-    <input name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
-           placeholder="КОД ПРИГЛАШЕНИЯ" autofocus>
-    <button type="submit">Продолжить</button>
-  </form>
-</body></html>`;
+    const notice = message
+      ? `<p class="error">${message}</p>`
+          : "";
+    return `<!doctype html>
+    <html lang="ru"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>\u041c\u0443\u0437\u044b\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u043e\u0440\u0442\u0438\u0440 \u2014 \u0437\u0430\u043a\u0440\u044b\u0442\u043e\u0435 \u0442\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435</title>
+    <style>
+      :root { color-scheme: dark; }
+        body { margin:0; min-height:100vh; display:grid; place-items:center;
+                 background:#111318; color:#e8eaf0;
+                          font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+                            form { width:min(92vw,26rem); padding:2rem; border:1px solid #262a35;
+                                     border-radius:14px; background:#181b22; }
+                                       h1 { margin:0 0 .5rem; font-size:1.4rem; }
+                                         p { margin:0 0 1.25rem; color:#9aa2b4; }
+                                           .error { color:#ff8f8f; }
+                                             input { width:100%; box-sizing:border-box; padding:.75rem .9rem; font-size:1rem;
+                                                       letter-spacing:.08em; background:#0e1015; color:#e8eaf0;
+                                                                 border:1px solid #2c3140; border-radius:9px; }
+                                                                   button { margin-top:.85rem; width:100%; padding:.75rem; font-size:1rem;
+                                                                              font-weight:600; color:#fff; background:#5b7cfa; border:0;
+                                                                                         border-radius:9px; cursor:pointer; }
+                                                                                           button:hover { background:#6d8bff; }
+                                                                                           </style></head>
+                                                                                           <body>
+                                                                                             <form method="POST">
+                                                                                                 <h1>\u0417\u0430\u043a\u0440\u044b\u0442\u043e\u0435 \u0442\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435</h1>
+                                                                                                     <p>\u00ab\u041c\u0443\u0437\u044b\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u043e\u0440\u0442\u0438\u0440\u00bb \u043f\u043e\u043a\u0430 \u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u043f\u043e \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f\u043c. \u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0432\u044b\u0434\u0430\u043d\u043d\u044b\u0439 \u043a\u043e\u0434.</p>
+                                                                                                         ${notice}
+                                                                                                             <input name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
+                                                                                                                        placeholder="\u041a\u041e\u0414 \u041f\u0420\u0418\u0413\u041b\u0410\u0428\u0415\u041d\u0418\u042f" autofocus>
+                                                                                                                            <button type="submit">\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c</button>
+                                                                                                                              </form>
+                                                                                                                              </body></html>`;
 }
 
 function htmlResponse(body, status, extraHeaders) {
-  return new Response(body, {
-    status,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-      // The login page must never be framed by another site.
-      "X-Frame-Options": "DENY",
-      "Referrer-Policy": "no-referrer",
-      ...extraHeaders,
-    },
-  });
+    return new Response(body, {
+          status,
+          headers: {
+                  "Content-Type": "text/html; charset=utf-8",
+                  "Cache-Control": "no-store",
+                  // The login page must never be framed by another site.
+                  "X-Frame-Options": "DENY",
+                  "Referrer-Policy": "no-referrer",
+                  ...extraHeaders,
+          },
+    });
 }
 
 export async function onRequest(context) {
-  const { request, env, next } = context;
-  const secret = env.SESSION_SECRET;
-  const rawCodes = env.INVITE_CODES;
+    const { request, env, next } = context;
+    const secret = env.SESSION_SECRET;
+    const rawCodes = env.INVITE_CODES;
 
   /*
-   * Missing configuration closes the door rather than opening it. A deploy that
-   * forgot its secrets should be visibly broken, not quietly public -- that
-   * mistake is exactly how a closed test becomes an open one without anyone
-   * noticing.
-   */
+     * Missing configuration closes the door rather than opening it. A deploy that
+     * forgot its secrets should be visibly broken, not quietly public -- that
+     * mistake is exactly how a closed test becomes an open one without anyone
+     * noticing.
+     */
   if (!secret || !rawCodes) {
-    return htmlResponse(
-      "<p>Гейт не настроен: не заданы SESSION_SECRET и INVITE_CODES.</p>", 503);
+        return htmlResponse(
+                "<p>\u0413\u0435\u0439\u0442 \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d: \u043d\u0435 \u0437\u0430\u0434\u0430\u043d\u044b SESSION_SECRET \u0438 INVITE_CODES.</p>", 503);
   }
 
   /*
-   * Signing out has to happen here, on the server. The session cookie is
-   * HttpOnly -- that is the point of it -- so no button on the page can clear
-   * it; only a Set-Cookie in a response can.
-   *
-   * POST rather than GET. With SameSite=Lax a cross-site *navigation* still
-   * carries the cookie, so a GET /logout could be triggered by any page that
-   * links to it and would sign the user out unasked. A cross-site POST does not
-   * carry it, so the same attempt simply fails.
-   *
-   * Handled before the session check, and without one: signing out must work
-   * whatever state the session is in, including already expired. Nothing here
-   * depends on who the caller is -- the worst a stranger can do is expire their
-   * own cookie.
-   */
+     * Signing out has to happen here, on the server. The session cookie is
+     * HttpOnly -- that is the point of it -- so no button on the page can clear
+     * it; only a Set-Cookie in a response can.
+     *
+     * POST rather than GET. With SameSite=Lax a cross-site *navigation* still
+     * carries the cookie, so a GET /logout could be triggered by any page that
+     * links to it and would sign the user out unasked. A cross-site POST does not
+     * carry it, so the same attempt simply fails.
+     *
+     * Handled before the session check, and without one: signing out must work
+     * whatever state the session is in, including already expired. Nothing here
+     * depends on who the caller is -- the worst a stranger can do is expire their
+     * own cookie.
+     */
   if (new URL(request.url).pathname === LOGOUT_PATH) {
-    if (request.method !== "POST") {
-      return new Response(null, { status: 303, headers: { Location: "/" } });
-    }
-    const response = new Response(null, { status: 303, headers: { Location: "/" } });
-    response.headers.append("Set-Cookie",
-      `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
-    return response;
+        if (request.method !== "POST") {
+                return new Response(null, { status: 303, headers: { Location: "/" } });
+        }
+        const response = new Response(null, { status: 303, headers: { Location: "/" } });
+        response.headers.append("Set-Cookie",
+                                      `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
+        return response;
   }
 
-  const label = await sessionLabel(secret, readCookie(request, COOKIE_NAME));
-  if (label !== null) {
-    // Routes downstream read this instead of the cookie, so the signature check
-    // above is the only place a session is ever trusted.
-    context.data.invite = label;
-    return next();
-  }
+  const session = await sessionInfo(secret, readCookie(request, COOKIE_NAME));
+    if (session !== null) {
+          // Routes downstream read these instead of the cookie, so the signature
+      // check above is the only place a session is ever trusted.
+      context.data.invite = session.label;
+          context.data.role = session.role;
+          return next();
+    }
 
   /*
-   * A POST without a session is treated as someone submitting the login form --
-   * but it is not necessarily one. The app POSTs JSON to /api/feedback, and if
-   * the session expired between loading the page and correcting a genre, that
-   * request lands here. Reading it as a form throws, and an exception in
-   * middleware means a 500 for what is simply an unauthenticated request.
-   *
-   * So the body is only parsed when it claims to be a form, and a failure to
-   * parse answers with the login page rather than propagating. Every path out
-   * of here still refuses to serve the app, which is the part that matters.
-   */
+     * A POST without a session is treated as someone submitting the login form --
+     * but it is not necessarily one. The app POSTs JSON to /api/feedback, and if
+     * the session expired between loading the page and correcting a genre, that
+     * request lands here. Reading it as a form throws, and an exception in
+     * middleware means a 500 for what is simply an unauthenticated request.
+     *
+     * So the body is only parsed when it claims to be a form, and a failure to
+     * parse answers with the login page rather than propagating. Every path out
+     * of here still refuses to serve the app, which is the part that matters.
+     */
   const contentType = request.headers.get("Content-Type") || "";
-  const looksLikeLoginForm =
-    contentType.includes("application/x-www-form-urlencoded") ||
-    contentType.includes("multipart/form-data");
+    const looksLikeLoginForm =
+          contentType.includes("application/x-www-form-urlencoded") ||
+          contentType.includes("multipart/form-data");
 
   if (request.method === "POST" && looksLikeLoginForm) {
-    const ip = clientAddress(request);
+        const ip = clientAddress(request);
 
-    /*
-     * Checked before the body is read, so a blocked address cannot spend the
-     * worker's time on parsing either. Retry-After is set because it is the
-     * honest answer to "when can I try again", and a well-behaved client reads
-     * it; a guesser ignoring it simply keeps getting 429.
-     */
-    const wait = await loginRetryDelay(env.DB, ip);
-    if (wait > 0) {
-      const minutes = Math.ceil(wait / 60);
-      return htmlResponse(
-        loginPage(`Слишком много попыток. Повторите через ${minutes} мин.`),
-        429,
-        { "Retry-After": String(wait) });
-    }
+      /*
+         * Checked before the body is read, so a blocked address cannot spend the
+         * worker's time on parsing either. Retry-After is set because it is the
+         * honest answer to "when can I try again", and a well-behaved client reads
+         * it; a guesser ignoring it simply keeps getting 429.
+         */
+      const wait = await loginRetryDelay(env.DB, ip);
+        if (wait > 0) {
+                const minutes = Math.ceil(wait / 60);
+                return htmlResponse(
+                          loginPage(`\u0421\u043b\u0438\u0448\u043a\u043e\u043c \u043c\u043d\u043e\u0433\u043e \u043f\u043e\u043f\u044b\u0442\u043e\u043a. \u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 ${minutes} \u043c\u0438\u043d.`),
+                          429,
+                  { "Retry-After": String(wait) });
+        }
 
-    let form;
-    try {
-      form = await request.formData();
-    } catch (e) {
-      return htmlResponse(loginPage(""), 401);
-    }
-    const submitted = String(form.get("code") || "").trim().toUpperCase();
+      let form;
+        try {
+                form = await request.formData();
+        } catch (e) {
+                return htmlResponse(loginPage(""), 401);
+        }
+        const submitted = String(form.get("code") || "").trim().toUpperCase();
 
-    let codes;
-    try {
-      codes = JSON.parse(rawCodes);
-    } catch (e) {
-      return htmlResponse("<p>INVITE_CODES не разбирается как JSON.</p>", 503);
-    }
+      let codes;
+        try {
+                codes = JSON.parse(rawCodes);
+        } catch (e) {
+                return htmlResponse("<p>INVITE_CODES \u043d\u0435 \u0440\u0430\u0437\u0431\u0438\u0440\u0430\u0435\u0442\u0441\u044f \u043a\u0430\u043a JSON.</p>", 503);
+        }
 
-    // Every code is checked, so the time taken does not reveal which one matched
-    // or how far down the list it sat.
-    let matched = null;
-    for (const [code, label] of Object.entries(codes)) {
-      if (equalsConstantTime(submitted, code.toUpperCase())) matched = label;
-    }
+      /*
+         * A code's value is either a bare label -- role "user", the original
+         * format -- or {label, role} for anything that needs more than that,
+         * which today just means "admin". Both forms are read here so that codes
+         * handed out before roles existed keep working without editing
+         * INVITE_CODES.
+         */
+      function normalizeEntry(value) {
+              if (value && typeof value === "object") {
+                        return {
+                                    label: String(value.label || ""),
+                                    role: value.role === "admin" ? "admin" : "user",
+                        };
+              }
+              return { label: String(value || ""), role: "user" };
+      }
 
-    if (!matched) {
-      await recordLoginFailure(env.DB, ip);
-      return htmlResponse(loginPage("Код не подошёл."), 401);
-    }
+      // Every code is checked, so the time taken does not reveal which one matched
+      // or how far down the list it sat.
+      let matched = null;
+        for (const [code, value] of Object.entries(codes)) {
+                if (equalsConstantTime(submitted, code.toUpperCase())) matched = normalizeEntry(value);
+        }
 
-    // A tester who mistyped their own code a few times before getting it right
-    // starts from a clean slate rather than carrying those failures around.
-    await clearLoginFailures(env.DB, ip);
+      if (!matched) {
+              await recordLoginFailure(env.DB, ip);
+              return htmlResponse(loginPage("\u041a\u043e\u0434 \u043d\u0435 \u043f\u043e\u0434\u043e\u0448\u0451\u043b."), 401);
+      }
 
-    const token = await issueSession(secret, matched);
-    const response = new Response(null, { status: 303, headers: { Location: "/" } });
-    response.headers.append("Set-Cookie",
-      `${COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; ` +
-      `HttpOnly; Secure; SameSite=Lax`);
-    return response;
+      // A tester who mistyped their own code a few times before getting it right
+      // starts from a clean slate rather than carrying those failures around.
+      await clearLoginFailures(env.DB, ip);
+
+      const token = await issueSession(secret, matched.label, matched.role);
+        const response = new Response(null, { status: 303, headers: { Location: "/" } });
+        response.headers.append("Set-Cookie",
+                                      `${COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; ` +
+                                      `HttpOnly; Secure; SameSite=Lax`);
+        return response;
   }
 
   return htmlResponse(loginPage(""), 401);
