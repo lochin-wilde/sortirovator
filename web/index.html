@@ -21,7 +21,13 @@
            from signing the user out through a stray link: with SameSite=Lax a
            cross-site navigation would still carry the cookie, a POST would not.
            Does nothing under `python3 -m http.server`, which has no gate. -->
-      <form method="POST" action="/logout" class="signout-form">
+      <!-- Hidden by default. Shown by app.js only after /api/whoami confirms
+                 the session's role is admin -- the check that actually protects the
+                            data lives server-side in functions/api/admin/feedback.js; this is
+                                       just so a regular tester never sees a link to a page that would 403
+                                                  them anyway. -->
+                                                        <a href="/admin.html" id="admin-link" class="link-button" data-i18n="gate.admin" hidden></a>
+                                                              <form method="POST" action="/logout" class="signout-form">
         <button type="submit" class="link-button" data-i18n="gate.signout"></button>
       </form>
     </div>
