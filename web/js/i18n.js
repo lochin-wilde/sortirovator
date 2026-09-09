@@ -14,6 +14,21 @@
 const TRANSLATIONS = {
   en: {
     "gate.signout": "Sign out",
+        "gate.admin": "Admin",
+        "admin.title": "Genre corrections",
+        "admin.lead": "Every correction testers have sent in, newest first.",
+        "admin.back": "\u2190 Back to the app",
+        "admin.refresh": "Refresh",
+        "admin.loading": "Loading\u2026",
+        "admin.empty": "No corrections yet.",
+        "admin.forbidden": "This page is for admins only. Signed in as a regular tester.",
+        "admin.loadError": "Couldn't load corrections. Try refreshing.",
+        "admin.col.when": "Received",
+        "admin.col.invite": "Tester",
+        "admin.col.track": "Track",
+        "admin.col.detected": "Detected",
+        "admin.col.corrected": "Corrected to",
+        "admin.col.bpmKey": "BPM / Key",
     "app.tagline": "Sorts, renames and normalizes your library in the browser. Your audio stays here \u2014 only track names go out, to look them up in the music databases.",
     "lang.label": "Language",
 
@@ -158,6 +173,21 @@ const TRANSLATIONS = {
 
   ru: {
     "gate.signout": "Выйти",
+        "gate.admin": "\u0410\u0434\u043c\u0438\u043d\u043a\u0430",
+        "admin.title": "\u0418\u0441\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044f \u0436\u0430\u043d\u0440\u043e\u0432",
+        "admin.lead": "\u0412\u0441\u0435 \u043f\u0440\u0430\u0432\u043a\u0438, \u043f\u0440\u0438\u0441\u043b\u0430\u043d\u043d\u044b\u0435 \u0442\u0435\u0441\u0442\u0435\u0440\u0430\u043c\u0438, \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u0432\u0435\u0436\u0438\u0435.",
+        "admin.back": "\u2190 \u041d\u0430\u0437\u0430\u0434 \u0432 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435",
+        "admin.refresh": "\u041e\u0431\u043d\u043e\u0432\u0438\u0442\u044c",
+        "admin.loading": "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430\u2026",
+        "admin.empty": "\u041f\u043e\u043a\u0430 \u043d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043f\u0440\u0438\u0441\u043b\u0430\u043b\u0438.",
+        "admin.forbidden": "\u042d\u0442\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0430 \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0430\u0434\u043c\u0438\u043d\u043e\u0432. \u0412\u044b \u0432\u043e\u0448\u043b\u0438 \u043a\u0430\u043a \u043e\u0431\u044b\u0447\u043d\u044b\u0439 \u0442\u0435\u0441\u0442\u0435\u0440.",
+        "admin.loadError": "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0438\u0441\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044f. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c.",
+        "admin.col.when": "\u041a\u043e\u0433\u0434\u0430",
+        "admin.col.invite": "\u0422\u0435\u0441\u0442\u0435\u0440",
+        "admin.col.track": "\u0422\u0440\u0435\u043a",
+        "admin.col.detected": "\u041e\u043f\u0440\u0435\u0434\u0435\u043b\u0435\u043d\u043e \u043a\u0430\u043a",
+        "admin.col.corrected": "\u0418\u0441\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e \u043d\u0430",
+        "admin.col.bpmKey": "BPM / \u0442\u043e\u043d\u0430\u043b\u044c\u043d\u043e\u0441\u0442\u044c",
     "app.tagline": "Сортирует, переименовывает и выравнивает громкость прямо в браузере. Музыка никуда не уходит \u2014 наружу отправляются только названия треков, чтобы найти их в музыкальных базах.",
     "lang.label": "Язык",
 
