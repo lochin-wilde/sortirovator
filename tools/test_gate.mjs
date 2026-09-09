@@ -16,6 +16,10 @@ const CODES = JSON.stringify({
   // A dot is the token's own field separator, so a label containing one must
   // not be able to shift what the rest of the payload parses as.
   "DJ-7777-8888-9999": "клуб им. Кирова",
+    // Object form carries a role. Anything other than exactly "admin" in here
+    // must be read as a plain user, not trusted as typed.
+    "DJ-ADMIN-0000-0000": { label: "\u041b\u043e\u0447\u0438\u043d", role: "admin" },
+    "DJ-WEIRD-0000-0000": { label: "\u0441\u0430\u043c\u043e\u0437\u0432\u0430\u043d\u0435\u0446", role: "superadmin" },
 });
 const env = { SESSION_SECRET: SECRET, INVITE_CODES: CODES };
 let served = 0;
@@ -174,6 +178,20 @@ check("метка с пробелом доходит целиком", (await lab
 check("точка внутри метки не ломает разбор", (await labelFor("DJ-7777-8888-9999")) === "клуб им. Кирова");
 check("латинская метка как была", (await labelFor("DJ-AAAA-BBBB-CCCC")) === "tester-one");
 
+// 11c. \u0420\u043e\u043b\u0438: \u043e\u0431\u044b\u0447\u043d\u044b\u0439 \u043a\u043e\u0434 -> user, \u043e\u0431\u044a\u0435\u043a\u0442\u043d\u044b\u0439 admin-\u043a\u043e\u0434 -> admin, \u0430 \u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e\u0435
+//      \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 role \u0432 \u043e\u0431\u044a\u0435\u043a\u0442\u0435 (\u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440 \u043e\u043f\u0435\u0447\u0430\u0442\u043a\u0430) \u043d\u0435 \u043f\u0440\u0435\u0432\u0440\u0430\u0449\u0430\u0435\u0442\u0441\u044f \u0432 admin.
+const roleFor = async (code) => {
+    const resp = await run(req("POST", { code }));
+    const tok = (resp.headers.get("Set-Cookie") || "").split(";")[0].split("=").slice(1).join("=");
+    await run(req("GET", { cookie: "sortir_session=" + tok }));
+    return lastData.role;
+};
+
+check("\u0441\u0442\u0440\u043e\u043a\u043e\u0432\u044b\u0439 \u043a\u043e\u0434 -> \u0440\u043e\u043b\u044c user", (await roleFor("DJ-AAAA-BBBB-CCCC")) === "user");
+check("\u043e\u0431\u044a\u0435\u043a\u0442\u043d\u044b\u0439 admin-\u043a\u043e\u0434 -> \u0440\u043e\u043b\u044c admin", (await roleFor("DJ-ADMIN-0000-0000")) === "admin");
+check("\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u0440\u043e\u043b\u044c \u0432 \u043e\u0431\u044a\u0435\u043a\u0442\u0435 -> user, \u043d\u0435 admin", (await roleFor("DJ-WEIRD-0000-0000")) === "user");
+check("\u043c\u0435\u0442\u043a\u0430 \u0438\u0437 \u043e\u0431\u044a\u0435\u043a\u0442\u043d\u043e\u0433\u043e \u043a\u043e\u0434\u0430 \u0442\u043e\u0436\u0435 \u0434\u043e\u0445\u043e\u0434\u0438\u0442", (await labelFor("DJ-ADMIN-0000-0000")) === "\u041b\u043e\u0447\u0438\u043d");
+
 // 11b. Сессии, выданные до перехода на кодирование, продолжают пускать:
 //      в них метка записана открытым ASCII, и раскодирование её не меняет.
 const legacyPayload = `${Math.floor(Date.now()/1000) + 9999}.tester-one`;
@@ -188,6 +206,7 @@ const servedBeforeLegacy = served;
 r = await run(req("GET", { cookie: "sortir_session=" + legacyToken }));
 check("сессия, выданная до изменения, ещё действует",
   served === servedBeforeLegacy + 1 && lastData.invite === "tester-one");
+check("\u0441\u0435\u0441\u0441\u0438\u044f \u0431\u0435\u0437 \u043f\u043e\u043b\u044f role -> user, \u043d\u0435 admin", lastData.role === "user");
 
 // 12a. POST с JSON без сессии — это не попытка входа, а запрос от приложения,
 //      у которого истекла сессия. Должен получить отказ, а не 500.
