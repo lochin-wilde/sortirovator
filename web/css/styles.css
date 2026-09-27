@@ -512,3 +512,6 @@ th.sortable.sorted.descending::after {
   display: inline;
   margin: 0;
 }
+
+/* An artist-level genre guess: same weight of warning as an unsure key. */
+.genre-weak { color: var(--warn); font-weight: 700; margin-left: 1px; }

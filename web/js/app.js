@@ -665,6 +665,7 @@ async function processFile(file, options, slot) {
     });
     result.genre = resolved.genre;
     result.genreSource = resolved.source;
+    result.genreWeak = resolved.weak === true;
   }
 
   /*
@@ -907,7 +908,12 @@ function resultCells(result, index) {
     : "—";
   const genreCell = result.genre
     ? '<button type="button" class="genre-edit" data-row="' + index + '">' +
-      escapeHtml(result.genre) + '<span class="genre-edit-mark">✎</span></button>'
+      escapeHtml(result.genre) +
+      // A guess from the artist's career, not the track: shown the way an unsure
+      // key already is, so the one field worth checking is the one marked.
+      (result.genreWeak ? '<span class="genre-weak" title="' +
+        escapeHtml(t("table.genreWeak")) + '">?</span>' : "") +
+      '<span class="genre-edit-mark">✎</span></button>'
     : "—";
 
   return '<td class="name">' + escapeHtml(result.name) + (result.error ? " ⚠" : "") + "</td>" +

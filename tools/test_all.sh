@@ -10,7 +10,9 @@ failed=0
 for t in tools/test/test_*.mjs; do
   printf '%-26s' "$(basename "$t")"
   if out=$(node "$t" 2>&1); then
-    echo "$out" | tail -1
+    # Tests disagree on whether their summary line is indented; the column
+    # should not depend on who wrote the test.
+    echo "$out" | tail -1 | sed 's/^ *//'
   else
     echo "УПАЛ"
     echo "$out" | tail -5 | sed 's/^/    /'
