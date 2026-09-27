@@ -5,13 +5,13 @@
  * guess instantly and for free, so a code's only defence is being too long to
  * find: "SORTIR-2026" falls to a wordlist, 20 hex characters does not.
  *
- *   node tools/make_invite_codes.mjs "Ваня" "Марина" "клуб Осень"
+ *   node tools/build/make_invite_codes.mjs "Ваня" "Марина" "клуб Осень"
  */
 import { randomBytes } from "node:crypto";
 
 const owners = process.argv.slice(2);
 if (owners.length === 0) {
-  console.error("Укажите, кому предназначены коды: node tools/make_invite_codes.mjs Ваня Марина");
+  console.error("Укажите, кому предназначены коды: node tools/build/make_invite_codes.mjs Ваня Марина");
   process.exit(1);
 }
 

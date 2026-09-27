@@ -60,11 +60,11 @@ when deployed to Cloudflare Pages.
 ## Tests
 
 ```bash
-node tools/test_gate.mjs functions/_middleware.js   # access control
-node tools/test_feedback.mjs                        # corrections API
-node tools/test_paths.mjs                           # ZIP folder names
-node tools/test_translit.mjs                        # Latin -> Cyrillic
-node tools/test_cleanup.mjs                         # filename cleanup
+node tools/test/test_gate.mjs functions/_middleware.js   # access control
+node tools/test/test_feedback.mjs                        # corrections API
+node tools/test/test_paths.mjs                           # ZIP folder names
+node tools/test/test_translit.mjs                        # Latin -> Cyrillic
+node tools/test/test_cleanup.mjs                         # filename cleanup
 ```
 
 All five run without a network, a database or a browser.
@@ -82,7 +82,7 @@ to revoke a single tester, are in the header comment of
 `web/data/genres_map.json` is generated, not edited:
 
 ```bash
-python3 tools/build_genres.py tools/genres_map.source.json web/data/genres_map.json
+python3 tools/build/build_genres.py tools/build/genres_map.source.json web/data/genres_map.json
 ```
 
 The source is a general-purpose vocabulary in which 2932 of 6700 tags point at

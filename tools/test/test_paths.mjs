@@ -8,7 +8,7 @@
  * and the mistake only appears when someone unpacks it -- which is exactly why
  * it is worth a test.
  *
- *   node tools/test_paths.mjs
+ *   node tools/test/test_paths.mjs
  */
 import { readFileSync } from "node:fs";
 

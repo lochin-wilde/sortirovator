@@ -22,7 +22,7 @@ import { dirname, join, relative } from "node:path";
 import os from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const ROOT = join(HERE, "../..");
+export const ROOT = join(HERE, "../../..");
 // app.js:33 -- the browser analyses the first two minutes and no more.
 export const ANALYSIS_MAX_SECONDS = 120;
 // The library these labels come from. Only used to shorten paths in the report.

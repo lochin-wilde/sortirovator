@@ -7,7 +7,7 @@
 # Run from the repository root.
 set -e
 failed=0
-for t in tools/test_*.mjs; do
+for t in tools/test/test_*.mjs; do
   printf '%-26s' "$(basename "$t")"
   if out=$(node "$t" 2>&1); then
     echo "$out" | tail -1

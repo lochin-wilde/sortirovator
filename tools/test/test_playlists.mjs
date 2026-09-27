@@ -7,7 +7,7 @@
  * long finished. The relative prefix and the CRLF line endings are exactly the
  * kind of detail that survives review and fails in the wild.
  *
- *   node tools/test_playlists.mjs
+ *   node tools/test/test_playlists.mjs
  */
 import { readFileSync } from "node:fs";
 

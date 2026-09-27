@@ -6,7 +6,7 @@
  * match or a silent miss, and nobody reviews a filename that looks plausible.
  * So the second half of this file matters more than the first.
  *
- *   node tools/test_cleanup.mjs
+ *   node tools/test/test_cleanup.mjs
  */
 import { readFileSync } from "node:fs";
 

@@ -12,7 +12,7 @@
  * this project's own toAscii() writes it -- which is what the filenames in the
  * library look like -- and converted back.
  *
- *   node tools/test_translit.mjs
+ *   node tools/test/test_translit.mjs
  */
 import { readFileSync } from "node:fs";
 

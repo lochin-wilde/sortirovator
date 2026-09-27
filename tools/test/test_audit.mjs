@@ -7,7 +7,7 @@
  * looked fine was not. So each check here runs the real function lifted out of
  * the shipped file.
  *
- *   node tools/test_audit.mjs
+ *   node tools/test/test_audit.mjs
  */
 import { readFileSync } from "node:fs";
 

@@ -61,11 +61,11 @@ cd web && python3 -m http.server 8777
 ## Тесты
 
 ```bash
-node tools/test_gate.mjs functions/_middleware.js   # контроль доступа
-node tools/test_feedback.mjs                        # приём исправлений
-node tools/test_paths.mjs                           # имена папок в архиве
-node tools/test_translit.mjs                        # латиница -> кириллица
-node tools/test_cleanup.mjs                         # чистка имён файлов
+node tools/test/test_gate.mjs functions/_middleware.js   # контроль доступа
+node tools/test/test_feedback.mjs                        # приём исправлений
+node tools/test/test_paths.mjs                           # имена папок в архиве
+node tools/test/test_translit.mjs                        # латиница -> кириллица
+node tools/test/test_cleanup.mjs                         # чистка имён файлов
 ```
 
 Все пять наборов работают без сети, без базы и без браузера.
@@ -83,7 +83,7 @@ Cloudflare Pages, каталог сборки `web`, команда сборки
 `web/data/genres_map.json` не правится руками, а генерируется:
 
 ```bash
-python3 tools/build_genres.py tools/genres_map.source.json web/data/genres_map.json
+python3 tools/build/build_genres.py tools/build/genres_map.source.json web/data/genres_map.json
 ```
 
 Исходник — универсальный словарь, в котором 2932 тега из 6700 указывают на Pop и

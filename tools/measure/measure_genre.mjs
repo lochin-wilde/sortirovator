@@ -33,7 +33,7 @@
  *
  * Usage
  * -----
- *   node tools/measure_genre.mjs [--per-folder N] [--seed N] [--out FILE]
+ *   node tools/measure/measure_genre.mjs [--per-folder N] [--seed N] [--out FILE]
  */
 
 import { readFileSync, existsSync } from "node:fs";

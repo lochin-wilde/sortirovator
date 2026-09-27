@@ -2,7 +2,7 @@
 """
 Pairs the tempo ground truth with the files it describes.
 
-tools/measure_bpm.mjs needs one thing the two collectors do not give it on
+tools/measure/measure_bpm.mjs needs one thing the two collectors do not give it on
 their own: a track name, the tempo Rekordbox decided on, and a path to audio
 that still exists. This builds that list.
 
@@ -20,7 +20,7 @@ This used to be a snippet pasted into a shell. The reports claim the
 measurements reproduce, which was not true while one step of the chain existed
 only in a scrollback buffer.
 
-    python3 tools/match_tracks.py [--root DIR] [--out FILE]
+    python3 tools/groundtruth/match_tracks.py [--root DIR] [--out FILE]
 """
 
 import argparse
@@ -28,7 +28,7 @@ import json
 import os
 import pathlib
 
-HERE = pathlib.Path(__file__).resolve().parent.parent
+HERE = pathlib.Path(__file__).resolve().parent.parent.parent
 DEFAULT_ROOT = pathlib.Path("/Volumes/HomeSSD/Lochin")
 DEFAULT_OUT = HERE / "ground-truth/matched.json"
 

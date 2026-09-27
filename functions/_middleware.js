@@ -284,7 +284,7 @@ function escapeHtml(value) {
  *
  * Styled from the same design tokens as the app -- copied verbatim from
  * web/css/styles.css, because this page cannot link that stylesheet: every path
- * but "/" is behind the gate it is part of. tools/test_style.mjs fails if the
+ * but "/" is behind the gate it is part of. tools/test/test_style.mjs fails if the
  * values drift. It used to carry its own near-miss palette (#5b7cfa against the
  * app's #5b8cff), dark only, so the one screen every tester sees first did not
  * match the app they were about to open.
