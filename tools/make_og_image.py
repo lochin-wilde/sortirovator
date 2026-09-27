@@ -23,15 +23,17 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / "web/og.png"
 WIDTH, HEIGHT = 1200, 630
 MARGIN = 84
 
-# Matches the landing page's dark palette, so the card and the page it links to
-# are recognisably the same thing.
-INK = (231, 234, 232)
-SOFT = (154, 163, 157)
-FAINT = (121, 130, 124)
-GROUND = (13, 16, 15)
-PANEL = (22, 26, 25)
-RULE = (41, 50, 48)
-ACCENT = (95, 183, 152)
+# The app's dark palette, from web/css/styles.css. The card is the first thing
+# anyone sees of this project, so it should look like the thing it links to --
+# and it once did not: it was drawn in a green of its own before the pages were
+# brought onto one set of tokens.
+INK = (231, 233, 238)      # --text     #e7e9ee
+SOFT = (154, 163, 178)     # --muted    #9aa3b2
+FAINT = (154, 163, 178)    # --muted
+GROUND = (15, 17, 21)      # --bg       #0f1115
+PANEL = (23, 26, 33)       # --panel    #171a21
+RULE = (42, 47, 58)        # --line     #2a2f3a
+ACCENT = (91, 140, 255)    # --accent   #5b8cff
 
 FONT_DIR = "/System/Library/Fonts/Supplemental/"
 
