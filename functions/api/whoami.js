@@ -13,16 +13,16 @@
  */
 
 function json(body) {
-    return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
-    });
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }
 
 export async function onRequest(context) {
-    const { data } = context;
-    return json({
-          label: (data && data.invite) || "",
-          role: (data && data.role) || "user",
-    });
+  const { data } = context;
+  return json({
+    label: (data && data.invite) || "",
+    role: (data && data.role) || "user",
+  });
 }
