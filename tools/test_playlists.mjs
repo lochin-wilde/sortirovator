@@ -116,16 +116,17 @@ const run = (rows, sort = true) => {
 };
 
 const mixed = [
-  track({ genre: "Afro House", key: "8A", bpm: 121, outputPath: "Afro House/a.mp3" }),
-  track({ genre: "UK Garage", key: "5A", bpm: 134, outputPath: "UK Garage/b.mp3" }),
-  track({ genre: "UK Garage", key: "12B", bpm: 138, outputPath: "UK Garage/c.mp3" }),
+  track({ genre: "Afro House", key: "8A", bpm: 121, browseLufs: -9.2, outputPath: "Afro House/a.mp3" }),
+  track({ genre: "UK Garage", key: "5A", bpm: 134, browseLufs: -14.7, outputPath: "UK Garage/b.mp3" }),
+  track({ genre: "UK Garage", key: "12B", bpm: 138, browseLufs: -6.1, outputPath: "UK Garage/c.mp3" }),
 ];
 
 const full = run(mixed);
 check("пишутся общий список, по темпу, по тональности и по жанрам",
   full.names.join("|") === [
     "Playlists/Afro House.m3u8", "Playlists/All tracks.m3u8",
-    "Playlists/By BPM.m3u8", "Playlists/By key.m3u8", "Playlists/UK Garage.m3u8",
+    "Playlists/By BPM.m3u8", "Playlists/By key.m3u8", "Playlists/By loudness.m3u8",
+    "Playlists/UK Garage.m3u8",
   ].join("|"));
 check("счётчик совпадает с числом файлов", full.count === full.names.length);
 
@@ -150,6 +151,17 @@ const pathsIn = (name) => zip.files.get(name).split("\r\n").filter((l) => l.star
 const keyOrder = pathsIn("Playlists/By key.m3u8");
 check("по тональности порядок идёт по кругу Camelot: 5A, 8A, 12B",
   keyOrder.join(" ") === "../UK Garage/b.mp3 ../Afro House/a.mp3 ../UK Garage/c.mp3");
+const loudOrder = pathsIn("Playlists/By loudness.m3u8");
+check("по громкости порядок от тихого к громкому: -14.7, -9.2, -6.1",
+  loudOrder.join(" ") === "../UK Garage/b.mp3 ../Afro House/a.mp3 ../UK Garage/c.mp3");
+check("треки без замера громкости в список не попадают", (() => {
+  run([mixed[0], mixed[1], track({ browseLufs: null, outputPath: "X/d.mp3" })]);
+  return !zip.files.get("Playlists/By loudness.m3u8").includes("X/d.mp3");
+})());
+
+// Предыдущая проверка перезаписала архив стенда, поэтому набор возвращается на
+// место: pathsIn читает то, что лежит в zip прямо сейчас.
+run(mixed);
 const bpmOrder = pathsIn("Playlists/By BPM.m3u8");
 check("по темпу порядок от медленного к быстрому",
   bpmOrder.join(" ") === "../Afro House/a.mp3 ../UK Garage/b.mp3 ../UK Garage/c.mp3");
