@@ -62,16 +62,26 @@ const PUBLIC_ASSETS = { "/og.png": "image/" };
  * handful answers 401 -- but it leaves the site's own instructions up to each
  * robot's guesswork instead of stating them.
  *
- * Longest match wins, so the listed prefixes stay out and the front door, the
- * card image and robots.txt itself stay in.
+ * Longest match wins, so the listed paths stay out and the front door, the card
+ * image and robots.txt itself stay in.
+ *
+ * Two different reasons are listed below, and they were worth separating. The
+ * first group is the application: closed by the gate already, and named here so
+ * a crawler does not spend its budget collecting 401s. "/index.html" is not one
+ * of them -- from outside it serves the landing, byte for byte the same page as
+ * "/" -- and it is excluded as a duplicate address rather than as a closed one.
+ * The canonical link on the page says the same thing to anything that fetches
+ * it anyway.
  */
 const ROBOTS_TXT = [
   "User-agent: *",
+  // Closed by the gate; listed so crawlers do not collect 401s.
   "Disallow: /js/",
   "Disallow: /css/",
   "Disallow: /data/",
   "Disallow: /api/",
   "Disallow: /admin.html",
+  // The landing under its other name. Excluded as a duplicate, not as a secret.
   "Disallow: /index.html",
   "Allow: /",
   "",
