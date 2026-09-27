@@ -24,8 +24,8 @@
  *
  * Usage
  * -----
- *   node tools/measure_key.mjs [--limit N] [--jobs N] [--seed N] [--out FILE]
- *   node tools/measure_key.mjs --rescore
+ *   node tools/measure/measure_key.mjs [--limit N] [--jobs N] [--seed N] [--out FILE]
+ *   node tools/measure/measure_key.mjs --rescore
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";

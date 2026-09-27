@@ -34,7 +34,7 @@
  *
  * Usage
  * -----
- *   node tools/sweep_key.mjs [--in FILE]
+ *   node tools/measure/sweep_key.mjs [--in FILE]
  */
 
 import { readFileSync } from "node:fs";

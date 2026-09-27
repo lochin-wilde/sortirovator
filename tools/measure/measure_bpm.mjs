@@ -1,7 +1,7 @@
 /*
  * Scores the app's tempo detector against the beat grid Rekordbox produced.
  *
- * Labels come from tools/rekordbox_anlz.py, which reads them out of Rekordbox's
+ * Labels come from tools/groundtruth/rekordbox_anlz.py, which reads them out of Rekordbox's
  * own analysis files. Everything generic -- decoding, the worker pool, the
  * report -- lives in lib/measure.mjs.
  *
@@ -12,8 +12,8 @@
  *
  * Usage
  * -----
- *   node tools/measure_bpm.mjs [--limit N] [--jobs N] [--seed N] [--out FILE]
- *   node tools/measure_bpm.mjs --rescore     # re-label a finished run
+ *   node tools/measure/measure_bpm.mjs [--limit N] [--jobs N] [--seed N] [--out FILE]
+ *   node tools/measure/measure_bpm.mjs --rescore     # re-label a finished run
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";

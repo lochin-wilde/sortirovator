@@ -12,7 +12,7 @@
  * This fails the moment a token differs, or an off-palette colour creeps into a
  * page that is supposed to be on the system.
  *
- *   node tools/test_style.mjs
+ *   node tools/test/test_style.mjs
  */
 import { readFileSync } from "node:fs";
 
@@ -84,7 +84,7 @@ check("админка: дополнительные стили без захар
   !/#[0-9a-f]{3,8}\b/i.test(adminStyle));
 
 // The link card is drawn by a script, so it is checked against the same system.
-const og = readFileSync("tools/make_og_image.py", "utf8");
+const og = readFileSync("tools/build/make_og_image.py", "utf8");
 const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ");
 check("карточка ссылки: акцент из палитры приложения",
   og.includes(`ACCENT = (${rgb(SYSTEM_DARK.accent)})`));

@@ -37,7 +37,7 @@ that holds for the longest -- for a DJ library that is the tempo of the track.
 
 Usage
 -----
-    python3 tools/rekordbox_anlz.py [--anlz DIR] [--out FILE]
+    python3 tools/groundtruth/rekordbox_anlz.py [--anlz DIR] [--out FILE]
 
 Defaults write to `ground-truth/rekordbox_bpm.json`, which .gitignore keeps out
 of the repository: it describes a private library and is not ours to publish.
@@ -52,7 +52,7 @@ import struct
 import sys
 
 DEFAULT_ANLZ = pathlib.Path.home() / "Library/Pioneer/rekordbox/share/PIONEER/USBANLZ"
-DEFAULT_OUT = pathlib.Path(__file__).resolve().parent.parent / "ground-truth/rekordbox_bpm.json"
+DEFAULT_OUT = pathlib.Path(__file__).resolve().parent.parent.parent / "ground-truth/rekordbox_bpm.json"
 
 # A section header is at minimum tag + len_header + len_tag.
 MIN_SECTION = 12

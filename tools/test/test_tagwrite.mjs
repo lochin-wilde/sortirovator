@@ -7,7 +7,7 @@
  * outright. So the writer is checked against the reader that ships beside it:
  * whatever buildId3v2 produces, parseId3v2 has to be able to read back.
  *
- *   node tools/test_tagwrite.mjs
+ *   node tools/test/test_tagwrite.mjs
  */
 import { readFileSync } from "node:fs";
 

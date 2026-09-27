@@ -10,7 +10,7 @@
  * request never arrived -- is invisible: the correction is simply never seen
  * again by anyone.
  *
- *   node tools/test_feedback.mjs
+ *   node tools/test/test_feedback.mjs
  */
 import { readFileSync } from "node:fs";
 

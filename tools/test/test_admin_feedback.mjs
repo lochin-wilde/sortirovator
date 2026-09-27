@@ -5,7 +5,7 @@
  * is checked too, but the access check is what a regression here would most
  * dangerously get wrong.
  *
- *   node tools/test_admin_feedback.mjs
+ *   node tools/test/test_admin_feedback.mjs
  */
 import { readFileSync } from "node:fs";
 

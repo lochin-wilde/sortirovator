@@ -7,7 +7,7 @@ measurements move. When the next run changes them, this regenerates the card in
 a second instead of someone editing a PNG by hand and quietly leaving a stale
 figure in front of everyone who sees the link.
 
-    .venv/bin/python tools/make_og_image.py
+    .venv/bin/python tools/build/make_og_image.py
 
 Writes web/og.png at 1200x630, the size every platform crops from. Cyrillic
 needs a font that has it, so the face is named explicitly rather than left to a
@@ -19,7 +19,7 @@ import sys
 
 from PIL import Image, ImageDraw, ImageFont
 
-OUT = pathlib.Path(__file__).resolve().parent.parent / "web/og.png"
+OUT = pathlib.Path(__file__).resolve().parent.parent.parent / "web/og.png"
 WIDTH, HEIGHT = 1200, 630
 MARGIN = 84
 

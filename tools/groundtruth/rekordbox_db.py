@@ -20,7 +20,7 @@ What the data is actually good for
 ----------------------------------
   key    2747 of 2764 tracks, in Camelot notation -- the same notation dsp.js
          emits, so it compares directly. This is the real prize.
-  BPM    complete, but tools/rekordbox_anlz.py already supplies it from the beat
+  BPM    complete, but tools/groundtruth/rekordbox_anlz.py already supplies it from the beat
          grid; kept here as a cross-check that the two agree.
   genre  set on 495 of 2764, and most of what is set came from whatever the
          download stamped in the ID3 tag -- "RUSSIAN", "Other", "UNDERGROUND",
@@ -30,7 +30,7 @@ What the data is actually good for
 
 Usage
 -----
-    .venv/bin/python tools/rekordbox_db.py [--out FILE]
+    .venv/bin/python tools/groundtruth/rekordbox_db.py [--out FILE]
 """
 
 import argparse
@@ -41,7 +41,7 @@ import sys
 import tempfile
 
 DEFAULT_DB = pathlib.Path.home() / "Library/Pioneer/rekordbox/master.db"
-DEFAULT_OUT = pathlib.Path(__file__).resolve().parent.parent / "ground-truth/rekordbox_db.json"
+DEFAULT_OUT = pathlib.Path(__file__).resolve().parent.parent.parent / "ground-truth/rekordbox_db.json"
 
 
 def attr(row, name):

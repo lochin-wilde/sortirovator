@@ -25,7 +25,7 @@
  *
  * Usage
  * -----
- *   node tools/dump_chroma.mjs [--limit N] [--jobs N] [--out FILE]
+ *   node tools/measure/dump_chroma.mjs [--limit N] [--jobs N] [--out FILE]
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";
