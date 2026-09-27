@@ -241,3 +241,236 @@ function readTags(bytes, extension) {
   }
   return { genre: null, artist: null, title: null };
 }
+
+/* ------------------------------------------------------------------ */
+/* Writing                                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Writes what the batch worked out back into the file itself.
+ *
+ * Renaming a file and filing it in a folder is only half the job, because
+ * Rekordbox reads the tag and not the name. A track that arrives as
+ * "Afro House/Black Coffee - Drive.mp3" still shows up with an empty genre
+ * column unless TCON says so.
+ *
+ * Two containers are handled, and between them they cover every file this app
+ * produces: MP3, which is what most of a DJ library is and what the encoder
+ * emits, and WAV, which is what loudness normalization writes by default. FLAC
+ * and M4A pass through untouched -- rewriting their metadata means rebuilding
+ * Vorbis blocks or shifting MP4 atom offsets, and a half-correct rewrite of a
+ * container is worse than leaving it alone. The caller is told which happened.
+ *
+ * Only the output copy inside the archive is written to. The file the user
+ * selected is never opened for writing; the browser cannot do that, and this
+ * app's promise is that the originals stay as they are.
+ */
+
+// ID3v2.4, with UTF-8 payloads. Rekordbox reads v2.4, and v2.3 would cost a
+// second size encoding for no gain.
+const ID3_TEXT_ENCODING_UTF8 = 0x03;
+
+/*
+ * TKEY carries the Camelot code ("8A"), not the notation the spec asks for
+ * ("Am"). That is a deliberate deviation: Mixed In Key established the
+ * convention, DJ software displays it, and it is the same string the results
+ * table shows, so what lands in the tag is what the user already checked.
+ */
+const ID3_FRAMES = [
+  ["TIT2", "title"], ["TPE1", "artist"], ["TCON", "genre"],
+  ["TBPM", "bpm"], ["TKEY", "key"],
+];
+
+// Every byte holds seven bits, so a size can never contain 0xFF and be mistaken
+// for the start of an audio frame.
+function synchsafeBytes(value) {
+  return [(value >> 21) & 0x7f, (value >> 14) & 0x7f, (value >> 7) & 0x7f, value & 0x7f];
+}
+
+function synchsafeValue(bytes, offset) {
+  return ((bytes[offset] & 0x7f) << 21) | ((bytes[offset + 1] & 0x7f) << 14)
+    | ((bytes[offset + 2] & 0x7f) << 7) | (bytes[offset + 3] & 0x7f);
+}
+
+function id3TextFrame(id, text) {
+  const payload = new TextEncoder().encode(String(text));
+  const frame = new Uint8Array(10 + 1 + payload.length);
+  for (let i = 0; i < 4; i++) frame[i] = id.charCodeAt(i);
+  frame.set(synchsafeBytes(payload.length + 1), 4);
+  // Frame flags: none set.
+  frame[8] = 0;
+  frame[9] = 0;
+  frame[10] = ID3_TEXT_ENCODING_UTF8;
+  frame.set(payload, 11);
+  return frame;
+}
+
+/*
+ * Everything already in the tag that we are not replacing, re-emitted for the
+ * new one.
+ *
+ * Without this the writer is a data-loss bug wearing a feature's clothes: it
+ * replaces the whole ID3v2 block, so cover art, comments, album, year and
+ * anything else the file arrived with disappear. Measured on one real track
+ * from the library, rewriting it dropped 102 KB of embedded artwork and nothing
+ * anywhere said so.
+ *
+ * Copying is deliberately timid, because a frame carried across wrongly is
+ * worse than a frame left behind:
+ *
+ *   v2.2 is skipped whole -- three-character ids and three-byte sizes are a
+ *   different layout, and the format is long dead.
+ *
+ *   An unsynchronised tag is skipped whole. Its frame bytes have been altered
+ *   to avoid false sync words, and copying them into a tag that does not
+ *   declare unsynchronisation would hand the reader mangled data.
+ *
+ *   A frame with any flag set is dropped. Those bits mean compressed,
+ *   encrypted, grouped, or carrying a data-length indicator, and each needs
+ *   handling this writer does not have.
+ *
+ * Sizes are re-encoded rather than copied: v2.3 counts frame length as a plain
+ * integer and v2.4 as a synchsafe one, so the bytes differ even when the number
+ * does not.
+ */
+function framesToCarryOver(bytes, replacing) {
+  const kept = [];
+  if (bytes.length < 10) return kept;
+  if (bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return kept;
+
+  const major = bytes[3];
+  const flags = bytes[5];
+  if (major !== 3 && major !== 4) return kept;
+  if ((flags & 0x80) !== 0) return kept;
+
+  let at = 10;
+  const end = Math.min(bytes.length, 10 + synchsafeValue(bytes, 6));
+
+  if ((flags & 0x40) !== 0 && at + 4 <= end) {
+    const extended = major === 4 ? synchsafeValue(bytes, at)
+      : ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) + 4;
+    at += extended;
+  }
+
+  while (at + 10 <= end) {
+    const id = String.fromCharCode(bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]);
+    // Padding: the rest of the tag is zero bytes, not another frame.
+    if (bytes[at] === 0) break;
+    const size = major === 4 ? synchsafeValue(bytes, at + 4)
+      : ((bytes[at + 4] << 24) | (bytes[at + 5] << 16) | (bytes[at + 6] << 8) | bytes[at + 7]) >>> 0;
+    if (size <= 0 || at + 10 + size > end) break;
+
+    const clean = bytes[at + 8] === 0 && bytes[at + 9] === 0;
+    if (clean && !replacing.has(id) && /^[A-Z0-9]{4}$/.test(id)) {
+      const payload = bytes.subarray(at + 10, at + 10 + size);
+      const frame = new Uint8Array(10 + size);
+      for (let i = 0; i < 4; i++) frame[i] = id.charCodeAt(i);
+      frame.set(synchsafeBytes(size), 4);
+      frame.set(payload, 10);
+      kept.push(frame);
+    }
+    at += 10 + size;
+  }
+  return kept;
+}
+
+function buildId3v2(fields, carried) {
+  const frames = [];
+  for (const [id, key] of ID3_FRAMES) {
+    const value = fields[key];
+    if (value === null || value === undefined || value === "") continue;
+    frames.push(id3TextFrame(id, value));
+  }
+  if (frames.length === 0) return null;
+  if (carried) for (const frame of carried) frames.push(frame);
+
+  const body = frames.reduce((sum, f) => sum + f.length, 0);
+  const tag = new Uint8Array(10 + body);
+  tag[0] = 0x49; tag[1] = 0x44; tag[2] = 0x33; // "ID3"
+  tag[3] = 4; tag[4] = 0;                      // v2.4.0
+  tag[5] = 0;                                  // no extended header, no footer
+  tag.set(synchsafeBytes(body), 6);
+  let at = 10;
+  for (const frame of frames) { tag.set(frame, at); at += frame.length; }
+  return tag;
+}
+
+// How many bytes an existing ID3v2 tag occupies at the front, 0 when there is
+// none. A footer, when present, adds another ten that belong to the tag too.
+function id3v2Length(bytes) {
+  if (bytes.length < 10) return 0;
+  if (bytes[0] !== 0x49 || bytes[1] !== 0x44 || bytes[2] !== 0x33) return 0;
+  const footer = (bytes[5] & 0x10) !== 0 ? 10 : 0;
+  return 10 + synchsafeValue(bytes, 6) + footer;
+}
+
+function writeMp3Tags(bytes, fields) {
+  /*
+   * Only the frames we are actually about to write count as replaced. Listing
+   * all five would delete the file's own artist and title on a batch that
+   * resolved a genre but no names -- turning "we learned something new" into
+   * "we lost what was already there".
+   */
+  const replacing = new Set(ID3_FRAMES
+    .filter(([, key]) => fields[key] !== null && fields[key] !== undefined && fields[key] !== "")
+    .map(([id]) => id));
+  const tag = buildId3v2(fields, framesToCarryOver(bytes, replacing));
+  if (!tag) return null;
+  // The old tag is replaced rather than appended to: two ID3v2 headers in one
+  // file is undefined behaviour, and readers disagree about which one wins.
+  // What was worth keeping from it has already been carried across.
+  const start = id3v2Length(bytes);
+  if (start >= bytes.length) return null;
+  const out = new Uint8Array(tag.length + (bytes.length - start));
+  out.set(tag, 0);
+  out.set(bytes.subarray(start), tag.length);
+  return out;
+}
+
+const RIFF_HEADER_BYTES = 12;
+
+function writeWavTags(bytes, fields) {
+  const tag = buildId3v2(fields);
+  if (!tag) return null;
+  if (bytes.length < RIFF_HEADER_BYTES) return null;
+  const ascii = (at, text) => {
+    for (let i = 0; i < text.length; i++) if (bytes[at + i] !== text.charCodeAt(i)) return false;
+    return true;
+  };
+  if (!ascii(0, "RIFF") || !ascii(8, "WAVE")) return null;
+
+  /*
+   * The tag rides in its own "id3 " chunk at the end. RIFF chunks are padded to
+   * an even length, and the size in the RIFF header counts everything after
+   * that header -- recomputed from the real length rather than trusted, since a
+   * streamed WAV can carry a placeholder there.
+   */
+  const padding = tag.length % 2;
+  const chunk = 8 + tag.length + padding;
+  const out = new Uint8Array(bytes.length + chunk);
+  out.set(bytes, 0);
+
+  let at = bytes.length;
+  out[at++] = 0x69; out[at++] = 0x64; out[at++] = 0x33; out[at++] = 0x20; // "id3 "
+  const size = tag.length;
+  out[at++] = size & 0xff; out[at++] = (size >> 8) & 0xff;
+  out[at++] = (size >> 16) & 0xff; out[at++] = (size >> 24) & 0xff;
+  out.set(tag, at);
+
+  const riffSize = out.length - 8;
+  out[4] = riffSize & 0xff; out[5] = (riffSize >> 8) & 0xff;
+  out[6] = (riffSize >> 16) & 0xff; out[7] = (riffSize >> 24) & 0xff;
+  return out;
+}
+
+/*
+ * Returns the tagged bytes, or null when this container is not one we write.
+ * Null is an answer, not a failure: the caller keeps the untagged output and
+ * reports it, rather than shipping a file that was rewritten badly.
+ */
+function writeTags(bytes, extension, fields) {
+  const kind = String(extension || "").toLowerCase();
+  if (kind === ".mp3") return writeMp3Tags(bytes, fields);
+  if (kind === ".wav") return writeWavTags(bytes, fields);
+  return null;
+}

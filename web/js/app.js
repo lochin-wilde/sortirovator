@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.09.27.1";
+const APP_VERSION = "2026.09.27.2";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -516,6 +516,8 @@ async function processFile(file, options, slot) {
     truePeakBeforeDb: null,
     outputPath: null,
     duration: null,
+    taggedFields: null,
+    tagNote: null,
     feedbackArtist: null,
     feedbackTitle: null,
     titleSimilarity: null,
@@ -721,6 +723,8 @@ async function processFile(file, options, slot) {
 
   await workerRequest(worker, { type: "release" }, [], "released");
 
+  outputBlob = await tagOutput(result, outputExtension, outputBlob);
+
   const folder = options.steps.sort && result.genre
     ? genreFolderName(result.genre) + "/" : "";
   result.outputPath = uniquePath(folder + prefix + stem + outputExtension);
@@ -820,6 +824,11 @@ function describeResult(result) {
     }
   }
 
+  if (result.taggedFields) {
+    lines.push(t("res.tagged", { fields: result.taggedFields.join(", ") }));
+  } else if (result.tagNote) {
+    lines.push(t("res.tagSkipped." + result.tagNote));
+  }
   lines.push(t("res.output", { path: result.outputPath }));
   return lines;
 }
@@ -1184,6 +1193,66 @@ function resetBatch() {
 
   logRaw("");
   log(t("msg.cleared"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Tag writing                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Largest output we will rewrite tags into.
+ *
+ * Tagging needs the whole file in memory at once -- an ID3 tag goes in front of
+ * the audio and a RIFF chunk goes after it, so either way the bytes are copied
+ * -- and that copy lands beside the decoded buffers several workers are already
+ * holding. A track this big is a recorded set rather than a song, and a missing
+ * genre tag on it costs far less than a killed tab costs the whole batch.
+ */
+const TAG_MAX_BYTES = 200 * 1024 * 1024;
+
+/*
+ * Writes the batch's findings into the output copy, in place of it going out
+ * with the tags it arrived with.
+ *
+ * Never fatal. Everything here is an improvement on a file that is already
+ * correct without it, so a container we cannot write, a file too large to copy,
+ * or an unexpected failure all end the same way: the original blob is returned
+ * untouched and the reason is recorded for the log.
+ */
+async function tagOutput(result, extension, blob) {
+  const fields = {
+    title: result.feedbackTitle || null,
+    artist: result.feedbackArtist || null,
+    genre: result.genre && result.genre !== "Unknown" ? result.genre : null,
+    bpm: typeof result.bpm === "number" && result.bpm > 0 ? String(result.bpm) : null,
+    key: result.key || null,
+  };
+  const present = Object.keys(fields).filter((k) => fields[k]);
+  if (present.length === 0) return blob;
+
+  const kind = String(extension || "").toLowerCase();
+  if (kind !== ".mp3" && kind !== ".wav") {
+    result.tagNote = "format";
+    return blob;
+  }
+  if (blob.size > TAG_MAX_BYTES) {
+    result.tagNote = "size";
+    return blob;
+  }
+
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const tagged = writeTags(bytes, kind, fields);
+    if (!tagged) {
+      result.tagNote = "format";
+      return blob;
+    }
+    result.taggedFields = present;
+    return new Blob([tagged], { type: blob.type });
+  } catch (e) {
+    result.tagNote = "failed";
+    return blob;
+  }
 }
 
 /* ------------------------------------------------------------------ */
