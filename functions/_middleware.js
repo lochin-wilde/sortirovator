@@ -47,6 +47,36 @@ const LANDING_PATH = "/landing.html";
 // asked for and not the application it sits in front of.
 const LANDING_MARKER = '<meta name="sortir-public" content="landing">';
 
+/*
+ * Files served without a session, and what each one has to look like before it
+ * is handed over. The value is the Content-Type the answer must start with: if
+ * the asset were missing and something else came back in its place, that
+ * something else would be the application, and it would not be an image.
+ */
+const PUBLIC_ASSETS = { "/og.png": "image/" };
+
+/*
+ * Answered here rather than from a file, because the gate would otherwise hand
+ * a crawler the login page in place of robots.txt. Most read a 4xx there as
+ * "crawl everything", which happens to be harmless -- every path but this
+ * handful answers 401 -- but it leaves the site's own instructions up to each
+ * robot's guesswork instead of stating them.
+ *
+ * Longest match wins, so the listed prefixes stay out and the front door, the
+ * card image and robots.txt itself stay in.
+ */
+const ROBOTS_TXT = [
+  "User-agent: *",
+  "Disallow: /js/",
+  "Disallow: /css/",
+  "Disallow: /data/",
+  "Disallow: /api/",
+  "Disallow: /admin.html",
+  "Disallow: /index.html",
+  "Allow: /",
+  "",
+].join("\n");
+
 const encoder = new TextEncoder();
 
 function base64url(bytes) {
@@ -448,6 +478,26 @@ export async function onRequest(context) {
    * rate-limited attempt keeps getting loginPage(), which carries the reason.
    */
   const path = new URL(request.url).pathname;
+
+  if (request.method === "GET" && path === "/robots.txt") {
+    return new Response(ROBOTS_TXT, {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  }
+
+  if (request.method === "GET" && Object.prototype.hasOwnProperty.call(PUBLIC_ASSETS, path)) {
+    try {
+      const asset = await next(request);
+      const type = asset && asset.headers.get("Content-Type");
+      if (asset && asset.status === 200 && type && type.startsWith(PUBLIC_ASSETS[path])) {
+        return asset;
+      }
+    } catch (e) {
+      // Falls through to the code box, same as a missing landing.
+    }
+  }
+
   if (request.method === "GET" && (path === "/" || path === "/index.html")) {
     try {
       const landing = await next(new Request(new URL(LANDING_PATH, request.url), {

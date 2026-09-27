@@ -36,11 +36,22 @@ let served = 0;
  */
 const LANDING_BODY = '<meta name="sortir-public" content="landing">ВИТРИНА';
 let landingMissing = false;
+// When true the asset handler answers /og.png with HTML instead of an image,
+// which is what a broken deploy would do -- the gate must not pass it on.
+let imageIsWrong = false;
 const next = async (rewritten) => {
   const path = rewritten ? new URL(rewritten.url).pathname : "/";
   if (path === "/landing.html") {
     if (landingMissing) return new Response("Not found", { status: 404 });
     return new Response(LANDING_BODY, { status: 200 });
+  }
+  if (path === "/og.png") {
+    if (imageIsWrong) {
+      served++;
+      return new Response("ПРИЛОЖЕНИЕ", {
+        status: 200, headers: { "Content-Type": "text/html" } });
+    }
+    return new Response("PNG", { status: 200, headers: { "Content-Type": "image/png" } });
   }
   served++;
   return new Response("ПРИЛОЖЕНИЕ", { status: 200 });
@@ -133,6 +144,31 @@ r = await run(req("GET"));
 check("витрина недоступна -> 401, а не что попало", r.status === 401 && served === 0);
 check("вместо неё форма логина", (await r.text()).includes("КОД ПРИГЛАШЕНИЯ"));
 landingMissing = false;
+
+// robots.txt и картинка ссылки — тоже публичные, и только они.
+r = await run(new Request("https://example.com/robots.txt"));
+const robots = await r.text();
+check("robots.txt отдаётся без сессии", r.status === 200 && served === 0);
+check("в нём текст, а не страница логина",
+  (r.headers.get("Content-Type") || "").startsWith("text/plain"));
+check("закрытые каталоги перечислены",
+  robots.includes("Disallow: /js/") && robots.includes("Disallow: /api/"));
+check("витрина разрешена", robots.includes("Allow: /"));
+r = await run(new Request("https://example.com/robots.txt", { method: "POST" }));
+check("не-GET на robots.txt -> 401", r.status === 401);
+
+r = await run(new Request("https://example.com/og.png"));
+check("картинка ссылки отдаётся без сессии", r.status === 200 && served === 0);
+check("и это картинка", (r.headers.get("Content-Type") || "").startsWith("image/"));
+
+// Если вместо картинки пришло что-то другое, это приложение. Отдавать нельзя.
+imageIsWrong = true;
+r = await run(new Request("https://example.com/og.png"));
+check("вместо картинки пришёл HTML -> 401, приложение не отдано",
+  r.status === 401 && served === 1);
+check("в теле форма логина", (await r.text()).includes("КОД ПРИГЛАШЕНИЯ"));
+imageIsWrong = false;
+served = 0;
 
 // 2. Неверный код
 r = await run(req("POST", { code: "НЕВЕРНЫЙ" }));
