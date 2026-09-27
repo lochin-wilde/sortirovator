@@ -62,6 +62,12 @@ button:hover{filter:brightness(1.1)}
 .msg{font-size:14px;color:var(--warm)}
 .note{font-size:14.5px;color:var(--ink-soft);border-left:2px solid var(--rule);padding-left:14px}
 footer{font-size:13.5px;color:var(--faint);border-top:1px solid var(--rule);padding-top:16px}
+/*
+  Three figures in a grid that fits two per row leaves an empty cell showing the
+  gap colour, which reads as a broken tile rather than as spacing. Below this
+  width they stack instead.
+*/
+@media (max-width:560px){ .stats{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
