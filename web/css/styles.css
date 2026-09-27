@@ -515,3 +515,7 @@ th.sortable.sorted.descending::after {
 
 /* An artist-level genre guess: same weight of warning as an unsure key. */
 .genre-weak { color: var(--warn); font-weight: 700; margin-left: 1px; }
+
+/* Import steps for the Rekordbox collection section. */
+.rb-steps { margin: 0.6rem 0 0.8rem; padding-left: 1.3rem; color: var(--text); }
+.rb-steps li { margin: 0.3rem 0; }

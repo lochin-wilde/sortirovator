@@ -27,6 +27,7 @@ closed testing.
 | **Names** | strips what download sites add, turns transliterated Latin back into Cyrillic, reads artist and title from the file's tags before guessing from its name |
 | **Tags** | genre, tempo and key are written back into MP3 and WAV output as ID3v2.4, carrying across the frames the file already had — cover art, Serato beat grids and the rest |
 | **Playlists** | `.m3u8` by genre, by tempo, around the Camelot wheel, and by loudness, with relative paths |
+| **Rekordbox collection** | reads a collection export, finds genres by artist and title — no audio needed — and writes back an XML holding only the tracks that changed, each copied from the export with one attribute altered. Every change is shown for review first; guesses from the artist arrive unticked |
 
 Every figure above was measured against a hand-labelled library, not estimated.
 How, and where the results are weak, is in [web/README.md](web/README.md). The
@@ -52,6 +53,7 @@ web/                  the app, served as static files
   js/dsp.js           FFT, tempogram BPM, CQT chroma key
   js/loudness.js      BS.1770, true peak, limiter, resampler, WAV and MP3
   js/tags.js          reading and writing ID3v2, Vorbis and MP4 tags
+  js/rekordbox.js     reading a Rekordbox collection export, writing genres back
   js/worker.js        runs the audio work off the main thread
   js/feedback.js      queues genre corrections
   js/admin.js         the admin panel

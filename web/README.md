@@ -121,6 +121,7 @@ is a record of what happened rather than live interface text.
 | `js/dsp.js` | FFT, onset/tempogram BPM, CQT chroma key |
 | `js/loudness.js` | ITU-R BS.1770 loudness, true peak, limiter, silence trim, resampler, WAV/MP3 encoders |
 | `js/tags.js` | Reads ID3v2, Vorbis comments and MP4 ilst; writes ID3v2.4 into MP3 and WAV |
+| `js/rekordbox.js` | Reads a Rekordbox collection export and writes an XML to import back, holding only the tracks whose genre changed |
 | `js/identify.js` | Filename parsing, transliteration, fuzzy matching, Discogs, MusicBrainz and Last.fm lookups, and the genre decision itself (`resolveGenreFrom`) |
 | `js/worker.js` | Runs all of the above off the main thread |
 | `js/app.js` | Batch orchestration, progress, results table, ZIP, `.m3u8` playlists, tag writing |
