@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.09.27.6";
+const APP_VERSION = "2026.09.27.7";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -1339,6 +1339,27 @@ function writePlaylists(options) {
   const byTempo = produced.filter((r) => typeof r.bpm === "number" && r.bpm > 0);
   if (byTempo.length > 1) {
     add("By BPM", byTempo.slice().sort((a, b) => a.bpm - b.bpm));
+  }
+
+  /*
+   * Loudness, and named as loudness rather than as energy.
+   *
+   * Sorting by "energy" is what the competition offers, and it is the one thing
+   * here that cannot be checked. The library holds no energy field -- no colour
+   * tags, no My Tags, nothing in the comments -- and the only proxy available,
+   * the order tracks were played in across fourteen recorded sets, correlates
+   * with tempo at rho +0.17, t = 2.06. That is a measuring stick made of noise,
+   * and a number validated against it would mean nothing.
+   *
+   * So this sorts by what was actually measured. LUFS is a real quantity with a
+   * definition, already computed for every track. It is not energy: modern
+   * masters are compressed, so a quiet record and a loud one often differ by
+   * the mastering rather than by the music. Quiet first, the direction a warm-up
+   * runs.
+   */
+  const byLoudness = produced.filter((r) => typeof r.browseLufs === "number");
+  if (byLoudness.length > 1) {
+    add("By loudness", byLoudness.slice().sort((a, b) => a.browseLufs - b.browseLufs));
   }
 
   const byKey = produced.filter((r) => camelotOrder(r.key) !== Infinity);
