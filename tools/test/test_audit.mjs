@@ -36,12 +36,12 @@ const constant = (path, name) => {
 const app = lift("web/js/app.js");
 const escapeHtml = (s) => String(s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const A = new Function("escapeHtml", [
+const A = new Function("escapeHtml", "t", [
   constant("web/js/app.js", "CAMELOT_KEY"),
   constant("web/js/app.js", "TRUE_PEAK_CEILING_DB"),
   app("camelotOrder"), app("resultCells"), app("sortValue"), app("safeGainDb"),
   "return { resultCells, sortValue, safeGainDb };",
-].join("\n"))(escapeHtml);
+].join("\n"))(escapeHtml, (key) => key);
 
 /* ---------- таблица: тональности по кругу Camelot ---------- */
 
@@ -62,6 +62,15 @@ const cells = A.resultCells(failed, 0).split("</td>").slice(0, -1)
 check("у сломанного файла в BPM прочерк, а не «undefined»", cells[3] === "—");
 check("ни в одной колонке нет «undefined»", !cells.join("|").includes("undefined"));
 check("сломанный файл сортируется по BPM без NaN", A.sortValue(failed, "bpm") === -1);
+
+/* ---------- жанр: догадка по артисту помечается ---------- */
+
+const genreOf = (row) => A.resultCells(row, 0).split("</td>")[2];
+const weak = genreOf({ name: "a.mp3", genre: "Afro House", genreWeak: true });
+const strong = genreOf({ name: "a.mp3", genre: "Afro House", genreWeak: false });
+check("догадка по артисту показана со знаком «?»", weak.includes('class="genre-weak"'));
+check("ответ о самом треке без знака", !strong.includes("genre-weak"));
+check("подсказка у знака берётся из переводов", weak.includes('title="table.genreWeak"'));
 
 /* ---------- громкость: потолок усиления ---------- */
 

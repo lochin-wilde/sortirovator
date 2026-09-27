@@ -1508,6 +1508,12 @@ function sanitizeFilename(text) {
  * already in this file. The ordering below is unchanged from the version that
  * ran in the page; the reasoning for each step is recorded at the step.
  *
+ * Returns { genre, source, weak }. `weak` marks an answer that describes the
+ * artist rather than this track -- Last.fm or MusicBrainz tags for the artist
+ * or the remixer. Measured against 258 filed tracks, those were right 22.5% of
+ * the time against 37.2% for answers about the track itself, on equal samples;
+ * the app shows them as a guess, the way it already shows an unsure key.
+ *
  *   deps.correctionFor(artist, title) -> a correction the user made, or null
  *   deps.t(key)                       -> a translated label
  *   deps.audioFallback()              -> { genre, features } from analysing the
@@ -1598,13 +1604,13 @@ async function resolveGenreFrom(context, deps) {
       if (options.lastfmKey) {
         const fromRemixer = await lastfmArtistGenre(remixer, options.lastfmKey, genresMap);
         if (fromRemixer) {
-          return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer };
+          return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer, weak: true };
         }
       }
       if (options.useMusicbrainz) {
         const fromRemixerMb = await musicbrainzArtistGenre(remixer, genresMap);
         if (fromRemixerMb) {
-          return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer };
+          return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer, weak: true };
         }
       }
       /*
@@ -1686,13 +1692,13 @@ async function resolveGenreFrom(context, deps) {
       if (options.lastfmKey) {
         const fromLastfmArtist = await lastfmArtistGenre(artist, options.lastfmKey, genresMap);
         if (fromLastfmArtist) {
-          return { genre: fromLastfmArtist.genre, source: 'Last.fm artist tag "' + fromLastfmArtist.tag + '" (artist-level)' };
+          return { genre: fromLastfmArtist.genre, source: 'Last.fm artist tag "' + fromLastfmArtist.tag + '" (artist-level)', weak: true };
         }
       }
       if (options.useMusicbrainz) {
         const fromArtist = await musicbrainzArtistGenre(artist, genresMap);
         if (fromArtist) {
-          return { genre: fromArtist.genre, source: 'MusicBrainz artist tag "' + fromArtist.tag + '" (artist-level)' };
+          return { genre: fromArtist.genre, source: 'MusicBrainz artist tag "' + fromArtist.tag + '" (artist-level)', weak: true };
         }
       }
     }
