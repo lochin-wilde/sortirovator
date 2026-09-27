@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Музыкальный сортир</title>
-<link rel="stylesheet" href="css/styles.css?v=2026.09.28.3">
+<link rel="stylesheet" href="css/styles.css?v=2026.09.28.4">
 </head>
 <body>
 
@@ -170,6 +170,67 @@
   </details>
 </section>
 
+<!-- Genres for a whole Rekordbox collection, from its XML export. No audio is
+     read: artist and title come from the export, tempo and key are already in
+     it. What comes out is an XML holding only the tracks whose genre changed,
+     each copied from the export with that one attribute altered. -->
+<section class="step" id="step-rekordbox">
+  <h2><span class="step-number">4</span> <span data-i18n="rb.title"></span></h2>
+  <p class="hint" data-i18n="rb.intro"></p>
+  <div class="picker">
+    <button type="button" class="button secondary" id="rb-pick" data-i18n="rb.pick"></button>
+    <input type="file" id="rb-input" accept=".xml,text/xml,application/xml" hidden>
+  </div>
+  <p class="hint" id="rb-summary" hidden></p>
+
+  <div id="rb-controls" hidden>
+    <div class="field-row checkboxes">
+      <label><input type="checkbox" id="rb-only-empty" checked> <span data-i18n="rb.onlyEmpty"></span></label>
+    </div>
+    <div class="run-bar">
+      <button type="button" class="button primary" id="rb-start" data-i18n="rb.start"></button>
+      <button type="button" class="button" id="rb-stop" hidden data-i18n="rb.stop"></button>
+      <button type="button" class="button secondary" id="rb-download" disabled data-i18n="rb.download"></button>
+    </div>
+    <div class="progress-block" id="rb-progress" hidden>
+      <div class="progress-line">
+        <span data-i18n="rb.progress"></span>
+        <div class="bar"><div class="bar-fill" id="rb-bar"></div></div>
+        <span class="counter" id="rb-counter">0 / 0</span>
+      </div>
+    </div>
+    <p class="hint" id="rb-status" hidden></p>
+  </div>
+
+  <div class="results-wrap">
+    <table class="results" id="rb-table" hidden>
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="rb-all" checked data-i18n-title="rb.toggleAll"></th>
+          <th data-i18n="table.artist"></th>
+          <th data-i18n="rb.colTitle"></th>
+          <th data-i18n="rb.colWas"></th>
+          <th data-i18n="rb.colGenre"></th>
+          <th data-i18n="rb.colSource"></th>
+        </tr>
+      </thead>
+      <tbody id="rb-body"></tbody>
+    </table>
+  </div>
+
+  <details class="log-box" id="rb-howto">
+    <summary data-i18n="rb.howTo"></summary>
+    <ol class="rb-steps">
+      <li data-i18n="rb.step1"></li>
+      <li data-i18n="rb.step2"></li>
+      <li data-i18n="rb.step3"></li>
+      <li data-i18n="rb.step4"></li>
+      <li data-i18n="rb.step5"></li>
+    </ol>
+    <p class="hint" data-i18n="rb.warning"></p>
+  </details>
+</section>
+
 </main>
 
 <!-- The deployed version, shown because there was no way to tell which build a
@@ -181,9 +242,9 @@
 
 <!-- jszip 3.10.1, served from our own origin: it handles every file the user
      loaded, so it is not a dependency to fetch from someone else's server. -->
-<script src="js/i18n.js?v=2026.09.28.3" defer></script>
-<script src="js/feedback.js?v=2026.09.28.3" defer></script>
-<script src="js/tags.js?v=2026.09.28.3" defer></script>
-<script src="js/app.js?v=2026.09.28.3" defer></script>
+<script src="js/i18n.js?v=2026.09.28.4" defer></script>
+<script src="js/feedback.js?v=2026.09.28.4" defer></script>
+<script src="js/tags.js?v=2026.09.28.4" defer></script>
+<script src="js/app.js?v=2026.09.28.4" defer></script>
 </body>
 </html>

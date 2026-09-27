@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.09.28.3";
+const APP_VERSION = "2026.09.28.4";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -1011,7 +1011,9 @@ ui.resultsBody.addEventListener("click", (event) => {
   if (button) openGenreEditor(button);
 });
 
-document.querySelector("thead").addEventListener("click", (event) => {
+// Scoped to its own table. It used to take the first <thead> in the document,
+// which only worked while this was the only table on the page.
+ui.results.querySelector("thead").addEventListener("click", (event) => {
   const th = event.target.closest("th.sortable");
   if (!th) return;
   const column = th.dataset.sort;
@@ -1576,6 +1578,247 @@ const versionBadge = el("app-version");
 if (versionBadge) versionBadge.textContent = "v" + APP_VERSION;
 
 initLanguage();
+/* ------------------------------------------------------------------ */
+/* Rekordbox collection: genres without touching the files             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Reads a Rekordbox collection export, looks up a genre for each track by its
+ * artist and title, and offers an XML to import back holding only the tracks
+ * that changed. The parsing and writing live in rekordbox.js; this is the page
+ * around them.
+ *
+ * Nothing is written without being seen first. Every proposed change is a row
+ * with a checkbox, because a confident answer can still be wrong -- on a sample
+ * of the owner's collection Discogs filed a drum & bass producer as Rock by
+ * matching a rock band of the same name -- and this lands in a working DJ's
+ * library. Guesses drawn from the artist rather than the track, right about one
+ * time in five, arrive unticked.
+ */
+const rb = {
+  text: null,
+  parsed: null,
+  rows: [],
+  running: false,
+  stopRequested: false,
+};
+
+const rbUi = {
+  pick: el("rb-pick"),
+  input: el("rb-input"),
+  summary: el("rb-summary"),
+  controls: el("rb-controls"),
+  onlyEmpty: el("rb-only-empty"),
+  start: el("rb-start"),
+  stop: el("rb-stop"),
+  download: el("rb-download"),
+  progress: el("rb-progress"),
+  bar: el("rb-bar"),
+  counter: el("rb-counter"),
+  status: el("rb-status"),
+  table: el("rb-table"),
+  body: el("rb-body"),
+  all: el("rb-all"),
+};
+
+// The playlist the output carries, so the tracks are one selection away on the
+// rekordbox xml tab. The import instructions name it, so it is not translated.
+const RB_PLAYLIST = "Музыкальный сортир — жанры";
+
+function ensureRekordboxLibrary() {
+  return loadScriptOnce("js/rekordbox.js", () => typeof readRekordboxXml !== "undefined");
+}
+
+function rbEta(msPerTrack, remaining) {
+  const minutes = Math.max(1, Math.round((msPerTrack * remaining) / 60000));
+  if (minutes < 60) return t("rb.minutes", { n: minutes });
+  return t("rb.hours", { h: Math.floor(minutes / 60), m: minutes % 60 });
+}
+
+function rbSetStatus(key, params) {
+  rbUi.status.hidden = false;
+  rbUi.status.textContent = t(key, params);
+}
+
+function rbRowHtml(row, index) {
+  const weakMark = row.weak
+    ? '<span class="genre-weak" title="' + escapeHtml(t("rb.weakSource")) + '">?</span>'
+    : "";
+  return '<tr><td><input type="checkbox" data-rb-row="' + index + '"' +
+    (row.checked ? " checked" : "") + "></td>" +
+    "<td>" + escapeHtml(row.artist || "—") + "</td>" +
+    "<td>" + escapeHtml(row.title || "—") + "</td>" +
+    '<td class="muted">' + escapeHtml(row.was || "—") + "</td>" +
+    "<td>" + escapeHtml(row.genre) + weakMark + "</td>" +
+    '<td class="muted">' + escapeHtml(row.source || "") + "</td></tr>";
+}
+
+function rbRefreshDownload() {
+  rbUi.download.disabled = rb.running || !rb.rows.some((row) => row.checked);
+}
+
+async function rbLoad(file) {
+  rb.text = null;
+  rb.parsed = null;
+  rb.rows = [];
+  rbUi.body.innerHTML = "";
+  rbUi.table.hidden = true;
+  rbUi.status.hidden = true;
+  rbUi.progress.hidden = true;
+  rbUi.controls.hidden = true;
+  rbRefreshDownload();
+  try {
+    await ensureRekordboxLibrary();
+    const text = await file.text();
+    const parsed = readRekordboxXml(text);
+    rb.text = text;
+    rb.parsed = parsed;
+    const empty = parsed.tracks.filter((track) => !(track.attrs.Genre || "").trim()).length;
+    rbUi.summary.textContent = t("rb.loaded", { total: parsed.tracks.length, empty });
+    rbUi.summary.hidden = false;
+    rbUi.controls.hidden = false;
+  } catch (e) {
+    rbUi.summary.textContent = t("rb.badFile", { message: (e && e.message) || String(e) });
+    rbUi.summary.hidden = false;
+  }
+}
+
+async function rbRun() {
+  if (!rb.parsed || rb.running) return;
+  const candidates = rb.parsed.tracks.filter((track) =>
+    (!rbUi.onlyEmpty.checked || !(track.attrs.Genre || "").trim()) &&
+    ((track.attrs.Artist || "").trim() || (track.attrs.Name || "").trim()));
+  if (candidates.length === 0) {
+    rbSetStatus("rb.nothing");
+    return;
+  }
+
+  rb.running = true;
+  rb.stopRequested = false;
+  rb.rows = [];
+  rbUi.body.innerHTML = "";
+  rbUi.table.hidden = true;
+  rbUi.start.hidden = true;
+  rbUi.stop.hidden = false;
+  rbUi.progress.hidden = false;
+  rbRefreshDownload();
+
+  await ensureIdentifyLibrary();
+  const genresMap = await loadGenresMap();
+  // The lookup switches and the Last.fm key are the ones set in step 2.
+  const options = readOptions();
+
+  const total = candidates.length;
+  let done = 0;
+  let found = 0;
+  let guessed = 0;
+  let unknown = 0;
+  const started = Date.now();
+
+  for (const track of candidates) {
+    if (rb.stopRequested) break;
+    const names = lookupNames(track.attrs, parseFilename);
+    const was = (track.attrs.Genre || "").trim();
+    let resolved = { genre: "Unknown" };
+    try {
+      resolved = await resolveGenreFrom({
+        // The collection's current genre stands in for the file tag, so a track
+        // no source knows keeps the genre it has instead of being cleared.
+        tags: { genre: was || null },
+        artist: names.artist,
+        track: names.title,
+        genresMap,
+        options,
+        recordingId: null,
+      }, { correctionFor, t });
+    } catch (e) {
+      resolved = { genre: "Unknown" };
+    }
+
+    done++;
+    const genre = resolved && resolved.genre;
+    if (!genre || genre === "Unknown") {
+      unknown++;
+    } else if (genre !== was) {
+      if (resolved.weak) guessed++; else found++;
+      const row = {
+        id: track.id,
+        artist: names.artist,
+        title: names.title,
+        was,
+        genre,
+        weak: resolved.weak === true,
+        source: resolved.source || "",
+        checked: resolved.weak !== true,
+      };
+      rb.rows.push(row);
+      rbUi.table.hidden = false;
+      rbUi.body.insertAdjacentHTML("beforeend", rbRowHtml(row, rb.rows.length - 1));
+      rbRefreshDownload();
+    }
+
+    rbUi.bar.style.width = ((100 * done) / total).toFixed(1) + "%";
+    rbUi.counter.textContent = done + " / " + total;
+    const msPerTrack = (Date.now() - started) / done;
+    rbSetStatus(done < total ? "rb.status" : "rb.statusDone", {
+      done, total, found, guessed, unknown, eta: rbEta(msPerTrack, total - done),
+    });
+  }
+
+  if (rb.stopRequested) {
+    rbSetStatus("rb.stopped");
+  }
+  rb.running = false;
+  rbUi.start.hidden = false;
+  rbUi.stop.hidden = true;
+  rbRefreshDownload();
+}
+
+function rbDownload() {
+  const changes = new Map();
+  for (const row of rb.rows) if (row.checked) changes.set(row.id, row.genre);
+  if (changes.size === 0) {
+    rbSetStatus("rb.noneChecked");
+    return;
+  }
+  const xml = buildGenreImport(rb.text, rb.parsed, changes, RB_PLAYLIST);
+  const blob = new Blob([xml], { type: "application/xml" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "rekordbox-genres-" + new Date().toISOString().slice(0, 10) + ".xml";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  rbSetStatus("rb.written", { count: changes.size });
+  el("rb-howto").open = true;
+}
+
+rbUi.pick.addEventListener("click", () => rbUi.input.click());
+rbUi.input.addEventListener("change", (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (file) rbLoad(file);
+  // Cleared so choosing the same file again, after re-exporting it, still fires.
+  event.target.value = "";
+});
+rbUi.start.addEventListener("click", rbRun);
+rbUi.stop.addEventListener("click", () => { rb.stopRequested = true; });
+rbUi.download.addEventListener("click", rbDownload);
+rbUi.body.addEventListener("change", (event) => {
+  const index = event.target.getAttribute && event.target.getAttribute("data-rb-row");
+  if (index === null || index === undefined) return;
+  const row = rb.rows[Number(index)];
+  if (row) row.checked = event.target.checked;
+  rbRefreshDownload();
+});
+rbUi.all.addEventListener("change", () => {
+  const on = rbUi.all.checked;
+  for (const row of rb.rows) row.checked = on;
+  rbUi.body.querySelectorAll("input[data-rb-row]").forEach((box) => { box.checked = on; });
+  rbRefreshDownload();
+});
+
 probeEnvironment();
 
 /*
