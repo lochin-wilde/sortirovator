@@ -279,9 +279,38 @@ function onsetStrength(y, sr, onProgress) {
 /* ------------------------------------------------------------------ */
 
 const BPM_MIN = 40;
-// Matches the Python constant: 200 covers drum & bass without opening the door
-// to the octave errors that showed up above it during testing.
-const BPM_MAX = 200;
+/*
+ * The highest tempo an answer may have. Its job has always been the same: cover
+ * drum & bass, and nothing above it, because above it the answers were octave
+ * errors. 200 was the first guess at where that line sits; measured, it sits
+ * lower.
+ *
+ * Against 4459 tracks labelled by Rekordbox, 105 answers were exactly double
+ * the truth, and they cluster where the answer lands above 195: a 97 BPM track
+ * read at 194, a 104 read at 208. Real material that fast is almost absent from
+ * a DJ library -- two tracks in the whole set sit at 195-199 -- while drum & bass
+ * lives at 170-178, well under the line.
+ *
+ * The threshold was picked on half the tracks and tested on the other half
+ * before anything shipped (33 fixed, 0 broken, z = 5.74 when simulated as a
+ * halving). Then the real detector was re-run on all 4459 with the cap in place,
+ * which is what counts, because excluding a candidate is not the same as halving
+ * an answer -- the octave search can land on a different peak: 53 fixed, 3
+ * broken, McNemar z = 6.68, exact 92.3% -> 93.4%.
+ *
+ * The three it broke are Rekordbox labels of exactly 195.0 that the detector
+ * refines to a hair above and now reports at 98. Moving the cap to 196 would
+ * keep them, and would also be tuning the threshold on the very tracks it was
+ * judged on, so it stays where the held-out half put it.
+ *
+ * It does not touch the deliberate double-time convention for half-time hip hop
+ * described at BPM_PRIOR_CENTER: that convention puts those tracks near 176,
+ * below the cap. What it does change is hardcore, gabber and speedcore, which
+ * genuinely run above 195 and will now be reported at half. That is an octave
+ * error of the same kind it removes -- one a DJ reads through -- traded for a
+ * genre this library barely contains.
+ */
+const BPM_MAX = 195;
 
 /*
  * librosa.autocorrelate uses an unpadded FFT, i.e. a *circular* autocorrelation
