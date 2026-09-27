@@ -75,7 +75,7 @@ def main():
                            radius=8, fill=PANEL, outline=RULE, width=1)
     column = (WIDTH - 2 * MARGIN) / 3
     for index, (value, what) in enumerate(
-            [("92.3%", "темп"), ("65.0%", "тональность"), ("20.5%", "жанр")]):
+            [("93.4%", "темп"), ("65.0%", "тональность"), ("20.5%", "жанр")]):
         x = MARGIN + column * index + 32
         draw.text((x, panel_top + 26), value, font=number, fill=INK)
         draw.text((x, panel_top + 88), what, font=caption, fill=FAINT)
