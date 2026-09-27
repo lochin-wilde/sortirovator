@@ -274,43 +274,92 @@ function readCookie(request, name) {
     return null;
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/*
+ * The door a visitor meets after a wrong or rate-limited code.
+ *
+ * Styled from the same design tokens as the app -- copied verbatim from
+ * web/css/styles.css, because this page cannot link that stylesheet: every path
+ * but "/" is behind the gate it is part of. tools/test_style.mjs fails if the
+ * values drift. It used to carry its own near-miss palette (#5b7cfa against the
+ * app's #5b8cff), dark only, so the one screen every tester sees first did not
+ * match the app they were about to open.
+ *
+ * `message` is escaped even though every caller passes a constant or a number
+ * of minutes today. It is interpolated into HTML, and the next caller should not
+ * have to know that to be safe.
+ */
 function loginPage(message) {
-    const notice = message
-      ? `<p class="error">${message}</p>`
-          : "";
-    return `<!doctype html>
-    <html lang="ru"><head><meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="robots" content="noindex,nofollow">
-    <title>\u041c\u0443\u0437\u044b\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u043e\u0440\u0442\u0438\u0440 \u2014 \u0437\u0430\u043a\u0440\u044b\u0442\u043e\u0435 \u0442\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435</title>
-    <style>
-      :root { color-scheme: dark; }
-        body { margin:0; min-height:100vh; display:grid; place-items:center;
-                 background:#111318; color:#e8eaf0;
-                          font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-                            form { width:min(92vw,26rem); padding:2rem; border:1px solid #262a35;
-                                     border-radius:14px; background:#181b22; }
-                                       h1 { margin:0 0 .5rem; font-size:1.4rem; }
-                                         p { margin:0 0 1.25rem; color:#9aa2b4; }
-                                           .error { color:#ff8f8f; }
-                                             input { width:100%; box-sizing:border-box; padding:.75rem .9rem; font-size:1rem;
-                                                       letter-spacing:.08em; background:#0e1015; color:#e8eaf0;
-                                                                 border:1px solid #2c3140; border-radius:9px; }
-                                                                   button { margin-top:.85rem; width:100%; padding:.75rem; font-size:1rem;
-                                                                              font-weight:600; color:#fff; background:#5b7cfa; border:0;
-                                                                                         border-radius:9px; cursor:pointer; }
-                                                                                           button:hover { background:#6d8bff; }
-                                                                                           </style></head>
-                                                                                           <body>
-                                                                                             <form method="POST">
-                                                                                                 <h1>\u0417\u0430\u043a\u0440\u044b\u0442\u043e\u0435 \u0442\u0435\u0441\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435</h1>
-                                                                                                     <p>\u00ab\u041c\u0443\u0437\u044b\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u0441\u043e\u0440\u0442\u0438\u0440\u00bb \u043f\u043e\u043a\u0430 \u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u043f\u043e \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f\u043c. \u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u0432\u044b\u0434\u0430\u043d\u043d\u044b\u0439 \u043a\u043e\u0434.</p>
-                                                                                                         ${notice}
-                                                                                                             <input name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
-                                                                                                                        placeholder="\u041a\u041e\u0414 \u041f\u0420\u0418\u0413\u041b\u0410\u0428\u0415\u041d\u0418\u042f" autofocus>
-                                                                                                                            <button type="submit">\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c</button>
-                                                                                                                              </form>
-                                                                                                                              </body></html>`;
+  const notice = message ? `<p class="error">${escapeHtml(message)}</p>` : "";
+  return `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Музыкальный сортир — закрытое тестирование</title>
+<style>
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --line: #2a2f3a;
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #5b8cff;
+  --accent-2: #3f6fd8;
+  --ok: #4ec98a;
+  --warn: #e0b341;
+  --err: #e0655f;
+  --radius: 10px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #f0f2f5;
+    --line: #dfe3ea;
+    --text: #1a1d23;
+    --muted: #5f6875;
+    --accent: #2f6bff;
+    --accent-2: #2455cc;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+  background: var(--bg); color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+form { width: min(100%, 26rem); padding: 2rem; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); }
+h1 { margin: 0 0 .5rem; font-size: 1.35rem; letter-spacing: -.01em; }
+p { margin: 0 0 1.25rem; color: var(--muted); }
+.error { color: var(--err); }
+input { width: 100%; padding: .65rem .8rem; font: 15px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .08em; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; }
+button { margin-top: .85rem; width: 100%; padding: .65rem; font-size: .95rem; font-weight: 600;
+  color: #fff; background: var(--accent); border: 1px solid var(--accent); border-radius: 8px;
+  cursor: pointer; transition: background .15s; }
+button:hover { background: var(--accent-2); }
+input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.back { display: inline-block; margin-top: 1.1rem; font-size: .88rem; color: var(--muted); text-decoration: none; }
+.back:hover { color: var(--accent); }
+</style></head>
+<body>
+<form method="POST" action="/">
+  <h1>Закрытое тестирование</h1>
+  <p>«Музыкальный сортир» пока доступен по приглашениям. Введите выданный код.</p>
+  ${notice}
+  <input name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
+         placeholder="КОД ПРИГЛАШЕНИЯ" autofocus>
+  <button type="submit">Продолжить</button>
+  <a class="back" href="/">← Что это за сервис</a>
+</form>
+</body></html>`;
 }
 
 function htmlResponse(body, status, extraHeaders) {

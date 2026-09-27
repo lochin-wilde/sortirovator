@@ -34,48 +34,78 @@
   surface at exactly one file.
 -->
 <style>
-:root{
-  --ground:#f1f2f0; --surface:#fff; --ink:#14171a; --ink-soft:#4e5660; --faint:#7b838d;
-  --rule:#d6dad6; --accent:#1c5d4a; --accent-soft:#dbeae4; --warm:#9a5a1c;
-  color-scheme:light;
+/*
+  Design tokens: copied verbatim from web/css/styles.css, the app's own system.
+  This page cannot link that stylesheet -- the gate answers every path but "/"
+  with the login page -- so it carries the same values inline instead, and
+  tools/test_style.mjs fails if the two ever drift apart. Change a colour in
+  styles.css first, then here.
+*/
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --line: #2a2f3a;
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --accent: #5b8cff;
+  --accent-2: #3f6fd8;
+  --ok: #4ec98a;
+  --warn: #e0b341;
+  --err: #e0655f;
+  --radius: 10px;
+  color-scheme: dark;
 }
-@media (prefers-color-scheme:dark){:root{
-  --ground:#0d100f; --surface:#161a19; --ink:#e7eae8; --ink-soft:#9aa39d; --faint:#79827c;
-  --rule:#293230; --accent:#5fb798; --accent-soft:#122a23; --warm:#cf9a54;
-  color-scheme:dark;
-}}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --panel-2: #f0f2f5;
+    --line: #dfe3ea;
+    --text: #1a1d23;
+    --muted: #5f6875;
+    --accent: #2f6bff;
+    --accent-2: #2455cc;
+    color-scheme: light;
+  }
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--ground);color:var(--ink);
-  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+body{margin:0;background:var(--bg);color:var(--text);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   -webkit-font-smoothing:antialiased}
 .wrap{max-width:720px;margin:0 auto;padding:44px 20px 72px;display:flex;flex-direction:column;gap:40px}
 h1{font-size:clamp(28px,6vw,40px);line-height:1.08;letter-spacing:-.02em;margin:0;text-wrap:balance}
-h2{font-size:19px;letter-spacing:-.01em;margin:0}
+h2{font-size:18px;letter-spacing:-.01em;margin:0}
 p{margin:0}
-.lede{font-size:18px;color:var(--ink-soft);max-width:54ch}
-.eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:0}
+code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel-2);
+  padding:1px 5px;border-radius:4px}
+.lede{font-size:17px;color:var(--muted);max-width:54ch}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 10px}
 section{display:flex;flex-direction:column;gap:14px}
-ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;color:var(--ink-soft)}
-li strong{color:var(--ink)}
+ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;color:var(--muted)}
+li strong{color:var(--text)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
-  background:var(--rule);border:1px solid var(--rule);border-radius:4px;overflow:hidden}
-.stat{background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+  background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.stat{background:var(--panel);padding:14px 16px;display:flex;flex-direction:column;gap:2px}
 .stat b{font-size:26px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.stat span{font-size:13px;color:var(--faint)}
-.gate{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:22px;
+.stat span{font-size:13px;color:var(--muted)}
+.gate{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;
   display:flex;flex-direction:column;gap:14px}
-label{font-size:13px;font-weight:600;color:var(--ink-soft)}
-.row{display:flex;gap:10px;flex-wrap:wrap}
-input[type=text]{flex:1 1 220px;min-width:0;padding:11px 13px;font:15px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;
-  letter-spacing:.06em;background:var(--ground);color:var(--ink);
-  border:1px solid var(--rule);border-radius:3px}
+.gate p{font-size:15px;color:var(--muted)}
+label{font-size:13px;font-weight:600;color:var(--muted)}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+input[type=text]{flex:1 1 220px;min-width:0;padding:.6rem .8rem;
+  font:15px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;
+  background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:8px}
 input[type=text]:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-button{padding:11px 20px;font-size:15px;font-weight:600;color:#fff;background:var(--accent);
-  border:0;border-radius:3px;cursor:pointer}
-button:hover{filter:brightness(1.1)}
-.msg{font-size:14px;color:var(--warm)}
-.note{font-size:14.5px;color:var(--ink-soft);border-left:2px solid var(--rule);padding-left:14px}
-footer{font-size:13.5px;color:var(--faint);border-top:1px solid var(--rule);padding-top:16px}
+/* Same shape as .button.primary in styles.css. */
+button{padding:.55rem 1.1rem;font-size:.95rem;font-weight:600;color:#fff;background:var(--accent);
+  border:1px solid var(--accent);border-radius:8px;cursor:pointer;transition:background .15s}
+button:hover{background:var(--accent-2)}
+.msg{font-size:14px;color:var(--warn)}
+.note{font-size:14.5px;color:var(--muted);border-left:2px solid var(--line);padding-left:14px}
+footer{font-size:13.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
 /*
   Three figures in a grid that fits two per row leaves an empty cell showing the
   gap colour, which reads as a broken tile rather than as spacing. Below this
@@ -106,7 +136,7 @@ footer{font-size:13.5px;color:var(--faint);border-top:1px solid var(--rule);padd
 
 <section>
   <h2>Насколько точно</h2>
-  <p class="lede" style="font-size:16px">Проверено на размеченной фонотеке: темп и тональность сверены с базой Rekordbox, жанр — с тем, как треки разложены руками.</p>
+  <p class="lede">Проверено на размеченной фонотеке: темп и тональность сверены с базой Rekordbox, жанр — с тем, как треки разложены руками.</p>
   <div class="stats">
     <div class="stat"><b>92.3%</b><span>темп, 4459 треков</span></div>
     <div class="stat"><b>65.0%</b><span>тональность, 4523</span></div>
@@ -122,10 +152,10 @@ footer{font-size:13.5px;color:var(--faint);border-top:1px solid var(--rule);padd
 
 <section class="gate">
   <h2>Вход по коду</h2>
-  <p style="font-size:15px;color:var(--ink-soft)">Пока это закрытый тест. Код выдаётся лично.</p>
+  <p>Пока это закрытый тест. Код выдаётся лично.</p>
   <form method="POST" action="/">
     <label for="code">Код приглашения</label>
-    <div class="row" style="margin-top:8px">
+    <div class="row">
       <input type="text" id="code" name="code" autocomplete="off" autocapitalize="characters"
              spellcheck="false" placeholder="DJ-XXXX-XXXX-XXXX" required>
       <button type="submit">Войти</button>
