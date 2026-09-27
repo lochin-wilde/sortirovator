@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.08.09.1";
+const APP_VERSION = "2026.09.27.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -515,6 +515,7 @@ async function processFile(file, options, slot) {
     gainDb: null,
     truePeakBeforeDb: null,
     outputPath: null,
+    duration: null,
     feedbackArtist: null,
     feedbackTitle: null,
     titleSimilarity: null,
@@ -610,6 +611,9 @@ async function processFile(file, options, slot) {
       result.error = describeDecodeFailure(file);
       return result;
     }
+    // Kept before the buffer is released: a playlist entry wants the length in
+    // seconds, and this is the only place it is known.
+    result.duration = audioBuffer.duration;
   }
 
   let analysisReply = { result: {} };
@@ -1127,7 +1131,13 @@ async function runBatch() {
   ui.download.disabled = state.producedCount === 0;
   ui.reset.disabled = false;
   ui.resetHint.hidden = state.producedCount === 0;
-  if (state.producedCount > 0) log(t("msg.zipReady"));
+  if (state.producedCount > 0) {
+    const playlists = writePlaylists(options);
+    if (playlists > 0) {
+      log(t("msg.playlistsWritten", { count: playlists, folder: PLAYLIST_FOLDER }));
+    }
+    log(t("msg.zipReady"));
+  }
 }
 
 /*
@@ -1174,6 +1184,121 @@ function resetBatch() {
 
   logRaw("");
   log(t("msg.cleared"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Playlists                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Writes .m3u8 playlists alongside the sorted folders.
+ *
+ * A folder of files is not a set. Rekordbox imports .m3u8 directly, so the
+ * work the batch already did -- the genre it decided on, the tempo and the key
+ * it measured -- can arrive as playlists instead of being re-derived by hand
+ * after the archive is unpacked.
+ *
+ * The files sit in their own folder and point at the tracks with relative
+ * paths, so the archive can be unpacked anywhere as long as it is unpacked
+ * whole. UTF-8 with CRLF line endings, which is what .m3u8 means and what every
+ * player agrees on.
+ *
+ * Two kinds are written. Per-genre playlists mirror the folders. The other two
+ * are the whole batch in a useful order rather than a subset: by tempo, and
+ * around the Camelot wheel, so that scrolling one puts tracks that mix next to
+ * each other. Ordering rather than filtering keeps this to a handful of files
+ * instead of the twenty-four a playlist-per-key would produce.
+ */
+const PLAYLIST_FOLDER = "Playlists";
+
+// 1A, 1B, 2A ... 12B. Sorting the text would file 10A before 2A.
+const CAMELOT_KEY = /^(\d{1,2})([AB])$/;
+
+function camelotOrder(key) {
+  const match = CAMELOT_KEY.exec(String(key || "").trim().toUpperCase());
+  if (!match) return Infinity;
+  const number = parseInt(match[1], 10);
+  if (number < 1 || number > 12) return Infinity;
+  return (number - 1) * 2 + (match[2] === "A" ? 0 : 1);
+}
+
+function playlistEntry(result) {
+  const path = result.outputPath;
+  /*
+   * A line break inside a path would end the entry early and leave the rest of
+   * the name standing as its own bogus playlist line. Nothing we write produces
+   * one -- the filename sanitizer would have to let a control character through
+   * -- so dropping the track is enough, and is better than emitting a file that
+   * looks fine until a player reads it.
+   */
+  if (!path || /[\r\n]/.test(path)) return null;
+
+  const seconds = Number.isFinite(result.duration) && result.duration > 0
+    ? Math.round(result.duration) : -1;
+  const artist = result.feedbackArtist;
+  const title = result.feedbackTitle;
+  const fallback = path.slice(path.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
+  const label = (artist && title) ? artist + " - " + title : (title || artist || fallback);
+
+  return "#EXTINF:" + seconds + "," + label.replace(/[\r\n]+/g, " ") + "\r\n" + "../" + path;
+}
+
+function playlistBody(results) {
+  const lines = [];
+  for (const result of results) {
+    const entry = playlistEntry(result);
+    if (entry) lines.push(entry);
+  }
+  return lines.length === 0 ? null : "#EXTM3U\r\n" + lines.join("\r\n") + "\r\n";
+}
+
+function writePlaylists(options) {
+  if (!state.zip) return 0;
+  const produced = resultRows.filter((r) => r && !r.error && r.outputPath);
+  if (produced.length === 0) return 0;
+
+  let written = 0;
+  const add = (name, rows) => {
+    const body = playlistBody(rows);
+    if (!body) return;
+    state.zip.file(PLAYLIST_FOLDER + "/" + name + ".m3u8", body);
+    written++;
+  };
+
+  add("All tracks", produced);
+
+  const byTempo = produced.filter((r) => typeof r.bpm === "number" && r.bpm > 0);
+  if (byTempo.length > 1) {
+    add("By BPM", byTempo.slice().sort((a, b) => a.bpm - b.bpm));
+  }
+
+  const byKey = produced.filter((r) => camelotOrder(r.key) !== Infinity);
+  if (byKey.length > 1) {
+    // Within one key, slowest first, so a run through the playlist is also a
+    // run up the tempo rather than jumping around inside each key.
+    add("By key", byKey.slice().sort((a, b) =>
+      camelotOrder(a.key) - camelotOrder(b.key) || (a.bpm || 0) - (b.bpm || 0)));
+  }
+
+  /*
+   * Per-genre lists only when sorting produced the folders they mirror, and
+   * only when there is more than one: a single playlist naming every track in
+   * the archive is what "All tracks" already is.
+   */
+  if (options.steps.sort) {
+    const groups = new Map();
+    for (const result of produced) {
+      if (!result.genre || result.genre === "Unknown") continue;
+      const folder = genreFolderName(result.genre);
+      if (!groups.has(folder)) groups.set(folder, []);
+      groups.get(folder).push(result);
+    }
+    if (groups.size > 1) {
+      for (const folder of [...groups.keys()].sort()) add(folder, groups.get(folder));
+    }
+  }
+
+  return written;
 }
 
 async function downloadZip() {
