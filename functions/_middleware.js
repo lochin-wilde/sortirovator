@@ -42,6 +42,10 @@ const COOKIE_NAME = "sortir_session";
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 // Must match the form action in web/index.html.
 const LOGOUT_PATH = "/logout";
+const LANDING_PATH = "/landing.html";
+// Present only in landing.html. What proves the rewrite returned the page we
+// asked for and not the application it sits in front of.
+const LANDING_MARKER = '<meta name="sortir-public" content="landing">';
 
 const encoder = new TextEncoder();
 
@@ -421,6 +425,44 @@ export async function onRequest(context) {
                                       `${COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; ` +
                                       `HttpOnly; Secure; SameSite=Lax`);
         return response;
+  }
+
+  /*
+   * A visitor arriving at the front door gets the landing page instead of a
+   * bare code box.
+   *
+   * Until now every path answered 401 with a form, so there was no way to tell
+   * anyone what this is without first giving them a code. The landing is one
+   * self-contained document -- it pulls no stylesheet, font or script -- which
+   * keeps the public surface at exactly one file. The app, its scripts, the
+   * genre map and the feedback route all stay closed.
+   *
+   * The response is checked before it is served. Asking the asset handler for
+   * a different path is a rewrite, and a rewrite that silently failed would
+   * hand an anonymous visitor whatever came back instead -- which is the app.
+   * So the body has to carry the landing's own marker, and anything else falls
+   * through to the code box. The failure direction is closed, not open.
+   *
+   * 200 because it is a page, not a refusal, and only for the clean entry
+   * paths: every other unauthenticated request still answers 401. A failed or
+   * rate-limited attempt keeps getting loginPage(), which carries the reason.
+   */
+  const path = new URL(request.url).pathname;
+  if (request.method === "GET" && (path === "/" || path === "/index.html")) {
+    try {
+      const landing = await next(new Request(new URL(LANDING_PATH, request.url), {
+        method: "GET",
+        headers: request.headers,
+      }));
+      if (landing && landing.status === 200) {
+        const html = await landing.text();
+        if (html.includes(LANDING_MARKER)) {
+          return htmlResponse(html, 200, { "Cache-Control": "no-store" });
+        }
+      }
+    } catch (e) {
+      // Asset routing is unavailable. The code box is a working front door.
+    }
   }
 
   return htmlResponse(loginPage(""), 401);
