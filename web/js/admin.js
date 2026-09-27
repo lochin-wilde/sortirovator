@@ -49,13 +49,21 @@ function bpmKeyCell(entry) {
     return escapeHtml(parts.join(" / "));
 }
 
+/*
+ * Raw values are kept raw until the one point they are written out.
+ *
+ * The filename used to be escaped when it stood in for a missing title and then
+ * escaped again on output, so "Kraak & Smaak.mp3" rendered as "Kraak &amp;
+ * Smaak.mp3". And because the comparison below then held an escaped string
+ * against a raw one, the two never matched and the filename appeared twice.
+ */
 function trackCell(entry) {
-    const artist = entry.artist || "";
-    const title = entry.title || "";
-    const line1 = [artist, title].filter(Boolean).join(" \u2014 ") || escapeHtml(entry.file || "");
-    const file = entry.file && line1 !== entry.file
-      ? `<div class="hint">${escapeHtml(entry.file)}</div>` : "";
-    return `${escapeHtml(line1)}${file}`;
+  const artist = entry.artist || "";
+  const title = entry.title || "";
+  const file = entry.file || "";
+  const line1 = [artist, title].filter(Boolean).join(" \u2014 ") || file;
+  const hint = file && line1 !== file ? `<div class="hint">${escapeHtml(file)}</div>` : "";
+  return `${escapeHtml(line1)}${hint}`;
 }
 
 function detectedCell(entry) {

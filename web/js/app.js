@@ -693,7 +693,10 @@ async function processFile(file, options, slot) {
     if (mode === "short_term" || mode === "integrated") {
       const current = mode === "short_term" ? analysis.shortTermMaxLufs : analysis.integratedLufs;
       result.measuredLufs = current !== null ? round2(current) : null;
-      if (current !== null) gainDb = options.loudness.targetLufs - current;
+      const safe = safeGainDb(options.loudness.targetLufs, current,
+        analysis.truePeakDb, options.loudness.safeLimiter);
+      gainDb = safe.gainDb;
+      result.gainLimited = safe.limited;
     }
     result.gainDb = round2(gainDb);
 
@@ -732,6 +735,41 @@ async function processFile(file, options, slot) {
   state.producedCount++;
 
   return result;
+}
+
+/*
+ * The gain that reaches the loudness target without clipping.
+ *
+ * Normalising a track that is quieter than the target turns it up, and nothing
+ * stopped that from pushing its peaks past full scale. The encoder clamps each
+ * sample to [-1, 1] -- so there is no wrap-around crackle -- but a clamped
+ * sample is a hard-clipped one, and hard clipping is audible distortion. With
+ * the limiter off, which is the default, a quiet recording asked to reach -16
+ * LUFS came back louder and broken, and nothing said so.
+ *
+ * So without the limiter the gain is capped where the measured true peak would
+ * land on the ceiling, and the track is reported as not having reached its
+ * target. Quieter and clean is the right trade: a DJ can raise a fader, but
+ * cannot remove distortion. With the limiter on it handles the peaks itself, so
+ * the full gain is applied.
+ *
+ * A track already louder than the target is turned down and is never affected.
+ */
+const TRUE_PEAK_CEILING_DB = -1.0;
+
+function safeGainDb(targetLufs, measuredLufs, truePeakDb, limiterOn) {
+  if (measuredLufs === null || measuredLufs === undefined || !Number.isFinite(measuredLufs)) {
+    return { gainDb: 0, limited: false };
+  }
+  const wanted = targetLufs - measuredLufs;
+  if (limiterOn || wanted <= 0 || truePeakDb === null || truePeakDb === undefined
+      || !Number.isFinite(truePeakDb)) {
+    return { gainDb: wanted, limited: false };
+  }
+  const headroom = TRUE_PEAK_CEILING_DB - truePeakDb;
+  if (wanted <= headroom) return { gainDb: wanted, limited: false };
+  // A peak already above the ceiling leaves no room to turn up at all.
+  return { gainDb: Math.max(0, headroom), limited: true };
 }
 
 function round2(value) {
@@ -829,6 +867,9 @@ function describeResult(result) {
   } else if (result.tagNote) {
     lines.push(t("res.tagSkipped." + result.tagNote));
   }
+  if (result.gainLimited) {
+    lines.push(t("res.gainLimited", { gain: result.gainDb }));
+  }
   lines.push(t("res.output", { path: result.outputPath }));
   return lines;
 }
@@ -857,7 +898,9 @@ function resultCells(result, index) {
     ? (result.keyConfident ? result.key : result.key + "?") +
       (result.keyConfidence !== null ? " (" + result.keyConfidence.toFixed(2) + ")" : "")
     : "—";
-  const bpmText = result.bpm === null ? "—"
+  // A file that failed never gets a bpm field at all, so it is undefined rather
+  // than null -- and `undefined === null` is false, which printed "undefined".
+  const bpmText = result.bpm === null || result.bpm === undefined ? "—"
     : result.bpmMode === "dynamic" ? result.bpm + "~" : String(result.bpm);
   const loudnessText = result.browseLufs !== null && result.browseLufs !== undefined
     ? result.browseLufs.toFixed(1) + " LUFS"
@@ -880,8 +923,9 @@ function sortValue(result, column) {
   switch (column) {
     case "artist": return (result.feedbackArtist || "").toLowerCase();
     case "genre": return (result.genre || "").toLowerCase();
-    case "bpm": return result.bpm === null ? -1 : result.bpm;
-    case "key": return result.key || "";
+    case "bpm": return typeof result.bpm === "number" ? result.bpm : -1;
+    // Camelot order, not text order: as text, 10A files before 2A.
+    case "key": return camelotOrder(result.key);
     // Quietest first, and tracks without a measurement sink to the bottom.
     case "loudness": return result.browseLufs === null || result.browseLufs === undefined
       ? -Infinity : result.browseLufs;
