@@ -143,7 +143,8 @@ Rules that came out of getting this wrong:
 - Comments explain *why*, usually with the measurement that justified the choice; match
   that when changing behaviour, and update the number when it changes.
 - Commit messages: English, an imperative summary line, a body explaining the reasoning
-  and evidence, ending with the `Co-Authored-By` line.
+  and evidence. **No `Co-Authored-By` trailer and no "Generated with Claude Code" line**
+  in commits or PRs: the owner asked for Claude to be removed from the contributors.
 - Tests: `tools/test/test_*.mjs`, labels in Russian, print `пройдено N/M`, exit non-zero
   on failure. A test that cannot fail is worthless — break the code once to see it catch.
 - UI strings go in `web/js/i18n.js` in both `en` and `ru`; `applyTranslations` handles
