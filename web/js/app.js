@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.09.28.4";
+const APP_VERSION = "2026.10.13.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -108,6 +108,16 @@ const ui = {
   resultsBody: el("results-body"),
   logBox: el("log-box"),
   log: el("log"),
+  dropzone: el("dropzone"),
+  runStatus: el("run-status"),
+  archivePreview: el("archive-preview"),
+  archiveSummary: el("archive-summary"),
+  archiveTree: el("archive-tree"),
+  tableHint: el("table-hint"),
+  feedbackBlock: el("feedback-block"),
+  lookupsPanel: el("lookups-panel"),
+  lookupsState: el("lookups-state"),
+  presetCustom: el("preset-custom"),
 };
 
 /* ------------------------------------------------------------------ */
@@ -123,6 +133,21 @@ function log(line) {
 function logRaw(line) {
   ui.log.textContent += line + "\n";
   ui.log.scrollTop = ui.log.scrollHeight;
+}
+
+/*
+ * A message the user has to see, not just the author.
+ *
+ * Until the log was hidden, "nothing to do", "finished" and "the archive could
+ * not be built" were said only there, under a heading telling people it was
+ * for developers. The status line under the run buttons says them now; the log
+ * keeps its copy with the timestamp.
+ */
+function notify(key, values, target) {
+  const line = target || ui.runStatus;
+  line.textContent = t(key, values);
+  line.hidden = false;
+  log(t(key, values));
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +188,19 @@ function probeEnvironment() {
 function isSupported(file) {
   const name = file.name.toLowerCase();
   return SUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+/*
+ * macOS bookkeeping, not music.
+ *
+ * On a drive that is not formatted for the Mac -- the exFAT external SSD a DJ
+ * library usually lives on -- Finder writes a "._name.mp3" beside every file
+ * it touches, holding the resource fork. It has the right extension and a few
+ * kilobytes of nothing, so it was counted as a track, sent to the decoder and
+ * reported as a failure, once per real track in the folder.
+ */
+function isMacMetadata(file) {
+  return file.name.startsWith("._") || file.name === ".DS_Store";
 }
 
 function formatMegabytes(bytes) {
@@ -214,7 +252,16 @@ function ensureIdentifyLibrary() {
 }
 
 function handleSelection(fileList) {
-  const all = Array.from(fileList);
+  // The batch reads state.files by index as it goes, so swapping the list
+  // underneath it -- easy now that a folder can be dropped at any moment --
+  // would mix two selections in one archive.
+  if (state.running) {
+    notify("msg.busy");
+    return;
+  }
+  // Silently: these were never the user's files, so "3 skipped" would only
+  // send them looking for tracks that do not exist.
+  const all = Array.from(fileList).filter((f) => !isMacMetadata(f));
   const supported = all.filter(isSupported);
   const wrongType = all.filter((f) => !isSupported(f));
   const tooBig = supported.filter((f) => f.size > MAX_FILE_BYTES);
@@ -252,6 +299,7 @@ function handleSelection(fileList) {
   }
 
   ui.start.disabled = accepted.length === 0 || state.running;
+  if (!state.running) ui.runStatus.hidden = true;
   log(t("msg.selected", {
     count: accepted.length,
     skipped: wrongType.length + tooBig.length,
@@ -261,6 +309,75 @@ function handleSelection(fileList) {
 function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/*
+ * Every file in what was dropped, folders opened all the way down.
+ *
+ * dataTransfer.files lists a dropped folder as one useless entry, so folders
+ * are walked through the entry API instead. readEntries hands a directory back
+ * in pieces -- Chrome stops at 100 per call -- and has to be called until it
+ * returns nothing, or a big genre folder arrives as its first hundred tracks.
+ */
+async function filesFromDrop(dataTransfer) {
+  const items = Array.from(dataTransfer.items || []);
+  const entries = items
+    .map((item) => (item.kind === "file" && item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (entries.length === 0) return Array.from(dataTransfer.files || []);
+
+  const files = [];
+  const readAll = (reader) => new Promise((resolve, reject) => {
+    const batch = [];
+    const next = () => reader.readEntries((chunk) => {
+      if (chunk.length === 0) resolve(batch);
+      else { batch.push(...chunk); next(); }
+    }, reject);
+    next();
+  });
+  const walk = async (entry) => {
+    if (entry.isFile) {
+      files.push(await new Promise((resolve, reject) => entry.file(resolve, reject)));
+    } else if (entry.isDirectory) {
+      for (const child of await readAll(entry.createReader())) await walk(child);
+    }
+  };
+  // The entries have to be taken before the first await: the browser empties
+  // the DataTransfer as soon as the drop handler yields.
+  for (const entry of entries) await walk(entry);
+  return files;
+}
+
+/*
+ * Makes `zone` accept drops and hands what was dropped to `onFiles`.
+ *
+ * The highlight is counted rather than toggled because dragenter and dragleave
+ * fire for every child the pointer crosses; a boolean flickers off over the
+ * buttons inside the zone.
+ */
+function acceptDrops(zone, onFiles) {
+  let depth = 0;
+  zone.addEventListener("dragenter", (event) => {
+    event.preventDefault();
+    depth++;
+    zone.classList.add("dragging");
+  });
+  zone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  });
+  zone.addEventListener("dragleave", () => {
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) zone.classList.remove("dragging");
+  });
+  zone.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    depth = 0;
+    zone.classList.remove("dragging");
+    const files = await filesFromDrop(event.dataTransfer);
+    onFiles(files);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -888,6 +1005,8 @@ function formatSigned(value) {
 const resultRows = [];
 let tableSort = { column: null, ascending: true };
 let tableFilter = "";
+// The row whose details are open under it, by index into resultRows.
+let openRow = null;
 
 function addResultRow(result) {
   resultRows.push(result);
@@ -962,10 +1081,18 @@ function renderResults() {
   }
 
   ui.resultsBody.innerHTML = visible
-    .map((row) => "<tr>" + resultCells(row.result, row.index) + "</tr>")
+    .map((row) => {
+      const open = row.index === openRow;
+      return '<tr class="track-row' + (open ? " open" : "") + '" tabindex="0" aria-expanded="' + open +
+        '" data-track="' + row.index + '">' +
+        resultCells(row.result, row.index) + "</tr>" +
+        (open ? '<tr class="detail-row"><td colspan="7">' + detailHtml(row.index) + "</td></tr>" : "");
+    })
     .join("");
   ui.results.hidden = resultRows.length === 0;
   ui.tableTools.hidden = resultRows.length === 0;
+  ui.tableHint.hidden = resultRows.length === 0;
+  ui.feedbackBlock.hidden = resultRows.length === 0;
   ui.tableCount.textContent = t("table.showing", { shown: visible.length, total: resultRows.length });
 
   document.querySelectorAll("th.sortable").forEach((th) => {
@@ -997,7 +1124,7 @@ function openGenreEditor(button) {
     if (commit && chosen !== result.genre) {
       result.genre = chosen;
       recordGenreCorrection(result, chosen);
-      log(t("feedback.saved", { genre: chosen, count: feedbackCount() }));
+      notify("feedback.saved", { genre: chosen, count: feedbackCount() });
     }
     renderResults();
   };
@@ -1006,10 +1133,102 @@ function openGenreEditor(button) {
   select.addEventListener("keydown", (e) => { if (e.key === "Escape") finish(false); });
 }
 
+/*
+ * What opens under a track when its row is clicked: the tracks in this batch
+ * it mixes with, then the reasoning the log used to be the only place for --
+ * where the genre came from, how sure the key is, what was done to the audio.
+ */
+function trackLabel(result) {
+  return result.feedbackArtist && result.feedbackTitle
+    ? result.feedbackArtist + " — " + result.feedbackTitle
+    : result.name;
+}
+
+function mixTempoText(neighbour) {
+  if (neighbour.delta === null) return "";
+  const percent = neighbour.delta * 100;
+  const text = Math.abs(percent) < 0.05 ? "±0%"
+    : (percent > 0 ? "+" : "−") + Math.abs(percent).toFixed(1) + "%";
+  if (neighbour.factor === 1) return text;
+  return text + " · " + t(neighbour.factor === 2 ? "mix.half" : "mix.double");
+}
+
+let whyOpen = false;
+
+function detailHtml(index) {
+  const result = resultRows[index];
+  const parts = [];
+  if (!result.error) {
+    const neighbours = mixNeighbours(resultRows, index);
+    parts.push('<div class="mix"><h4>' + escapeHtml(t("mix.title")) + "</h4>");
+    if (neighbours.length === 0) {
+      const measured = parseCamelot(result.key) !== null || result.bpm > 0;
+      parts.push('<p class="hint">' + escapeHtml(t(measured ? "mix.none" : "mix.noData")) + "</p>");
+    } else {
+      if (neighbours.some((n) => n.delta !== null)) {
+        parts.push('<p class="hint mix-hint">' + escapeHtml(t("mix.tempoHint")) + "</p>");
+      }
+      parts.push('<ul class="mix-list">' + neighbours.map((n) => {
+        const other = resultRows[n.index];
+        const meta = [
+          other.key ? other.key + (other.keyConfident ? "" : "?") : null,
+          n.relation ? t("mix." + n.relation) : null,
+          typeof other.bpm === "number" ? other.bpm + " BPM" : null,
+          mixTempoText(n),
+        ].filter(Boolean).join(" · ");
+        return '<li><button type="button" class="mix-track" data-open="' + n.index + '">' +
+          escapeHtml(trackLabel(other)) + '</button> <span class="mix-meta">' +
+          escapeHtml(meta) + "</span></li>";
+      }).join("") + "</ul>");
+    }
+    parts.push("</div>");
+  }
+  parts.push('<details class="why"' + (whyOpen ? " open" : "") + "><summary>" +
+    escapeHtml(t("mix.details")) + "</summary><pre>" +
+    escapeHtml(describeResult(result).map((line) => line.trim()).join("\n")) +
+    "</pre></details>");
+  return parts.join("");
+}
+
+function toggleRow(index) {
+  openRow = openRow === index ? null : index;
+  renderResults();
+}
+
 ui.resultsBody.addEventListener("click", (event) => {
   const button = event.target.closest(".genre-edit");
-  if (button) openGenreEditor(button);
+  if (button) {
+    openGenreEditor(button);
+    return;
+  }
+  // A track in the mix list opens its own neighbours, so a set can be walked
+  // through from one record to the next.
+  const jump = event.target.closest(".mix-track");
+  if (jump) {
+    openRow = Number(jump.dataset.open);
+    renderResults();
+    const row = ui.resultsBody.querySelector('tr[data-track="' + openRow + '"]');
+    if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return;
+  }
+  if (event.target.closest(".genre-picker, .detail-row")) return;
+  const row = event.target.closest("tr.track-row");
+  if (row) toggleRow(Number(row.dataset.track));
 });
+
+ui.resultsBody.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const row = event.target.closest && event.target.closest("tr.track-row");
+  if (!row || event.target !== row) return;
+  event.preventDefault();
+  toggleRow(Number(row.dataset.track));
+});
+
+// The table is redrawn as each track finishes, so the reasoning block would
+// snap shut under the reader every few seconds without this.
+ui.resultsBody.addEventListener("toggle", (event) => {
+  if (event.target.classList && event.target.classList.contains("why")) whyOpen = event.target.open;
+}, true);
 
 // Scoped to its own table. It used to take the first <thead> in the document,
 // which only worked while this was the only table on the page.
@@ -1072,16 +1291,19 @@ async function loadGenresMap() {
 async function runBatch() {
   const options = readOptions();
   if (!options.steps.fixNames && !options.steps.sort && !options.steps.bpmKey && !options.steps.loudness) {
-    log(t("msg.nothingToDo"));
+    notify("msg.nothingToDo");
     return;
   }
 
   try {
     await Promise.all([ensureZipLibrary(), ensureIdentifyLibrary()]);
   } catch (e) {
-    log(t("msg.zipUnavailable"));
+    notify("msg.zipUnavailable");
     return;
   }
+  ui.runStatus.hidden = true;
+  ui.archivePreview.hidden = true;
+  openRow = null;
 
   state.running = true;
   state.cancelRequested = false;
@@ -1178,7 +1400,6 @@ async function runBatch() {
     })());
   }
   await Promise.all(workersRunning);
-  if (state.cancelRequested) log(t("msg.cancelled", { done: done }));
 
   setFileProgress("", 0);
   ui.fileStage.textContent = "";
@@ -1188,7 +1409,6 @@ async function runBatch() {
   state.running = false;
 
   logRaw("");
-  log(t("msg.finished", { done: done, failed: failed, produced: state.producedCount }));
   ui.download.disabled = state.producedCount === 0;
   ui.reset.disabled = false;
   ui.resetHint.hidden = state.producedCount === 0;
@@ -1197,8 +1417,55 @@ async function runBatch() {
     if (playlists > 0) {
       log(t("msg.playlistsWritten", { count: playlists, folder: PLAYLIST_FOLDER }));
     }
-    log(t("msg.zipReady"));
+    renderArchivePreview();
   }
+  notify(state.cancelRequested ? "msg.cancelled" : "msg.finished",
+    { done: done, failed: failed, produced: state.producedCount });
+}
+
+/*
+ * The archive's folders and playlists, shown before it is downloaded.
+ *
+ * Until now the only way to see where a batch had put things was to download
+ * the ZIP and unpack it -- a few hundred megabytes to find out that a genre
+ * came out wrong. Each folder opens to the files in it.
+ */
+const ARCHIVE_PREVIEW_FILES = 200;
+
+function renderArchivePreview() {
+  if (!state.zip) return;
+  const paths = [];
+  state.zip.forEach((path, entry) => { if (!entry.dir) paths.push(path); });
+  const tree = archiveTree(paths, PLAYLIST_FOLDER);
+
+  const fileList = (files) => {
+    const shown = files.slice(0, ARCHIVE_PREVIEW_FILES)
+      .map((name) => "<li>" + escapeHtml(name) + "</li>").join("");
+    const more = files.length > ARCHIVE_PREVIEW_FILES
+      ? "<li class=\"muted\">" + escapeHtml(t("archive.more", { count: files.length - ARCHIVE_PREVIEW_FILES })) + "</li>"
+      : "";
+    return "<ul>" + shown + more + "</ul>";
+  };
+
+  let html = tree.folders.map((folder) =>
+    '<details class="archive-folder' + (folder.playlists ? " playlists" : "") + '"><summary>' +
+    '<span class="folder-name">' + escapeHtml(folder.name) + "/</span>" +
+    '<span class="folder-count">' + folder.files.length + "</span></summary>" +
+    fileList(folder.files) + "</details>").join("");
+  if (tree.rootFiles.length > 0) {
+    html += '<details class="archive-folder"><summary><span class="folder-name">' +
+      escapeHtml(t("archive.root")) + '</span><span class="folder-count">' +
+      tree.rootFiles.length + "</span></summary>" + fileList(tree.rootFiles) + "</details>";
+  }
+
+  const playlists = tree.folders.find((folder) => folder.playlists);
+  const tracks = paths.length - (playlists ? playlists.files.length : 0);
+  const folders = tree.folders.length - (playlists ? 1 : 0);
+  ui.archiveSummary.textContent = t("archive.summary", {
+    tracks, folders, playlists: playlists ? playlists.files.length : 0,
+  });
+  ui.archiveTree.innerHTML = html;
+  ui.archivePreview.hidden = false;
 }
 
 /*
@@ -1222,12 +1489,17 @@ function resetBatch() {
 
   ui.resultsBody.innerHTML = "";
   resultRows.length = 0;
+  openRow = null;
   tableSort = { column: null, ascending: true };
   tableFilter = "";
   ui.tableFilter.value = "";
   ui.tableTools.hidden = true;
+  ui.tableHint.hidden = true;
+  ui.feedbackBlock.hidden = true;
   ui.results.hidden = true;
   ui.progressBlock.hidden = true;
+  ui.archivePreview.hidden = true;
+  ui.archiveTree.innerHTML = "";
   setBatchProgress(0, 0);
   setFileProgress("", 0);
   setFileLabel(t("step3.currentFile"));
@@ -1244,7 +1516,7 @@ function resetBatch() {
   ui.start.disabled = true;
 
   logRaw("");
-  log(t("msg.cleared"));
+  notify("msg.cleared");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1461,7 +1733,7 @@ async function downloadZip() {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     log(t("msg.archiveWritten", { size: (blob.size / (1024 * 1024)).toFixed(1) }));
   } catch (e) {
-    log(t("msg.archiveFailed", { message: e.message }));
+    notify("msg.archiveFailed", { message: e.message });
   }
   ui.download.textContent = previousLabel;
   ui.download.disabled = false;
@@ -1475,10 +1747,104 @@ ui.pickFiles.addEventListener("click", () => ui.fileInput.click());
 ui.pickFolder.addEventListener("click", () => ui.folderInput.click());
 ui.fileInput.addEventListener("change", (e) => handleSelection(e.target.files));
 ui.folderInput.addEventListener("change", (e) => handleSelection(e.target.files));
+acceptDrops(ui.dropzone, handleSelection);
 
-ui.stepLoudness.addEventListener("change", () => {
+/*
+ * A file dropped anywhere but a drop zone is opened by the browser in place of
+ * the page -- which, halfway through a batch, throws the batch away. Refusing
+ * the drop everywhere else makes a near miss harmless.
+ */
+window.addEventListener("dragover", (event) => event.preventDefault());
+window.addEventListener("drop", (event) => event.preventDefault());
+
+/* Presets: four switches set in one click, and the switches still win. */
+const stepSwitches = {
+  fixNames: ui.stepFixNames, sort: ui.stepSort, bpmKey: ui.stepBpmKey, loudness: ui.stepLoudness,
+};
+
+function syncStepsUi() {
+  const steps = {};
+  for (const name of Object.keys(stepSwitches)) steps[name] = stepSwitches[name].checked;
+  const active = matchPreset(steps);
+  document.querySelectorAll(".chip[data-preset]").forEach((chip) => {
+    chip.setAttribute("aria-pressed", String(chip.dataset.preset === active));
+  });
+  ui.presetCustom.hidden = active !== null;
   ui.loudnessPanel.disabled = !ui.stepLoudness.checked;
+  ui.loudnessPanel.hidden = !ui.stepLoudness.checked;
+}
+
+document.querySelectorAll(".chip[data-preset]").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const preset = PRESETS.find((p) => p.id === chip.dataset.preset);
+    if (!preset) return;
+    for (const name of Object.keys(stepSwitches)) stepSwitches[name].checked = preset.steps[name];
+    syncStepsUi();
+  });
 });
+for (const box of Object.values(stepSwitches)) box.addEventListener("change", syncStepsUi);
+syncStepsUi();
+
+/*
+ * The lookups block is closed by default, so its heading says what is on:
+ * otherwise "Last.fm is not being asked" is only discoverable by opening it.
+ */
+function syncLookupsState() {
+  const on = [];
+  if (ui.useDiscogs.checked) on.push("Discogs");
+  if (ui.useMusicbrainz.checked) on.push("iTunes", "MusicBrainz");
+  if (ui.lastfmKey.value.trim()) on.push("Last.fm");
+  ui.lookupsState.textContent = on.length === 0 ? t("lookups.stateNone")
+    : "— " + on.join(" · ") + (ui.lastfmKey.value.trim() ? "" : " " + t("lookups.stateNoKey"));
+}
+[ui.useDiscogs, ui.useMusicbrainz].forEach((box) => box.addEventListener("change", syncLookupsState));
+ui.lastfmKey.addEventListener("input", syncLookupsState);
+
+/*
+ * The two modes. Remembered per browser, and also reachable as #rekordbox so a
+ * link can open the page on the collection tool directly.
+ */
+const MODE_STORAGE_KEY = "sortirovator.mode";
+const MODES = ["files", "rekordbox"];
+
+function showMode(mode) {
+  if (!MODES.includes(mode)) mode = "files";
+  for (const name of MODES) {
+    const tab = el("mode-" + name);
+    tab.setAttribute("aria-selected", String(name === mode));
+    tab.tabIndex = name === mode ? 0 : -1;
+    el("mode-" + name + "-panel").hidden = name !== mode;
+  }
+  // The lookup switches follow whichever mode is showing; see index.html.
+  const slot = document.querySelector('.lookups-slot[data-slot="' + mode + '"]');
+  if (slot && ui.lookupsPanel.parentNode !== slot) slot.appendChild(ui.lookupsPanel);
+  try { localStorage.setItem(MODE_STORAGE_KEY, mode); } catch (e) { /* ignore */ }
+  const hash = mode === "files" ? "" : "#" + mode;
+  if (location.hash !== hash) history.replaceState(null, "", location.pathname + location.search + hash);
+}
+
+MODES.forEach((name, i) => {
+  const tab = el("mode-" + name);
+  tab.addEventListener("click", () => showMode(name));
+  // Arrow keys move between tabs, as in any tab list.
+  tab.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    const next = MODES[(i + (event.key === "ArrowRight" ? 1 : MODES.length - 1)) % MODES.length];
+    showMode(next);
+    el("mode-" + next).focus();
+  });
+});
+
+function initialMode() {
+  const fromHash = location.hash.replace(/^#/, "");
+  if (MODES.includes(fromHash)) return fromHash;
+  try {
+    const saved = localStorage.getItem(MODE_STORAGE_KEY);
+    if (MODES.includes(saved)) return saved;
+  } catch (e) { /* ignore */ }
+  return "files";
+}
+showMode(initialMode());
 
 ui.loudnessMode.addEventListener("change", () => {
   const mode = ui.loudnessMode.value;
@@ -1508,6 +1874,8 @@ try {
   if (saved) ui.lastfmKey.value = saved;
 } catch (e) { /* private browsing blocks storage; not worth reporting */ }
 
+syncLookupsState();
+
 ui.lastfmKey.addEventListener("change", () => {
   try {
     const value = ui.lastfmKey.value.trim();
@@ -1529,6 +1897,10 @@ function initLanguage() {
     button.addEventListener("click", () => {
       setLanguage(button.dataset.lang);
       paint();
+      // Text the page builds itself, rather than fills from data-i18n.
+      syncLookupsState();
+      if (resultRows.length > 0) renderResults();
+      if (!ui.archivePreview.hidden) renderArchivePreview();
       // The results table is already rendered, so its headers are re-read from
       // the table but existing rows keep the wording they were written with.
       // Only the log carries that risk, and rewriting past log lines would be
@@ -1547,7 +1919,7 @@ ui.tableFilter.addEventListener("input", () => {
 ui.feedbackExport.addEventListener("click", () => {
   const entries = exportFeedback();
   if (feedbackCount() === 0) {
-    log(t("feedback.none"));
+    notify("feedback.none");
     return;
   }
   // Same shape a server would receive, so the file doubles as a check on the
@@ -1563,7 +1935,7 @@ ui.feedbackExport.addEventListener("click", () => {
 
 ui.feedbackClear.addEventListener("click", () => {
   clearFeedback();
-  log(t("feedback.cleared"));
+  notify("feedback.cleared");
 });
 
 /*
@@ -1616,6 +1988,9 @@ const rbUi = {
   bar: el("rb-bar"),
   counter: el("rb-counter"),
   status: el("rb-status"),
+  wait: el("rb-wait"),
+  written: el("rb-written"),
+  dropzone: el("rb-dropzone"),
   table: el("rb-table"),
   body: el("rb-body"),
   all: el("rb-all"),
@@ -1666,6 +2041,8 @@ async function rbLoad(file) {
   rbUi.status.hidden = true;
   rbUi.progress.hidden = true;
   rbUi.controls.hidden = true;
+  rbUi.wait.hidden = false;
+  rbUi.written.hidden = true;
   rbRefreshDownload();
   try {
     await ensureRekordboxLibrary();
@@ -1677,6 +2054,7 @@ async function rbLoad(file) {
     rbUi.summary.textContent = t("rb.loaded", { total: parsed.tracks.length, empty });
     rbUi.summary.hidden = false;
     rbUi.controls.hidden = false;
+    rbUi.wait.hidden = true;
   } catch (e) {
     rbUi.summary.textContent = t("rb.badFile", { message: (e && e.message) || String(e) });
     rbUi.summary.hidden = false;
@@ -1778,7 +2156,7 @@ function rbDownload() {
   const changes = new Map();
   for (const row of rb.rows) if (row.checked) changes.set(row.id, row.genre);
   if (changes.size === 0) {
-    rbSetStatus("rb.noneChecked");
+    notify("rb.noneChecked", null, rbUi.written);
     return;
   }
   const xml = buildGenreImport(rb.text, rb.parsed, changes, RB_PLAYLIST);
@@ -1791,8 +2169,7 @@ function rbDownload() {
   link.click();
   document.body.removeChild(link);
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  rbSetStatus("rb.written", { count: changes.size });
-  el("rb-howto").open = true;
+  notify("rb.written", { count: changes.size }, rbUi.written);
 }
 
 rbUi.pick.addEventListener("click", () => rbUi.input.click());
@@ -1801,6 +2178,11 @@ rbUi.input.addEventListener("change", (event) => {
   if (file) rbLoad(file);
   // Cleared so choosing the same file again, after re-exporting it, still fires.
   event.target.value = "";
+});
+acceptDrops(rbUi.dropzone, (files) => {
+  const xml = files.find((file) => /\.xml$/i.test(file.name));
+  if (xml) rbLoad(xml);
+  else notify("rb.dropNotXml", null, rbUi.summary);
 });
 rbUi.start.addEventListener("click", rbRun);
 rbUi.stop.addEventListener("click", () => { rb.stopRequested = true; });
@@ -1838,6 +2220,12 @@ flushFeedback();
  * outcome is an admin having to reload rather than a tester seeing a link
  * that would 403 them anyway.
  */
+/*
+ * The developer log goes the same way, and is also shown on a local server,
+ * where there is no gate to ask and the only person looking is the author.
+ */
+if (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) ui.logBox.hidden = false;
+
 (async () => {
   const adminLink = el("admin-link");
   if (!adminLink) return;
@@ -1845,7 +2233,10 @@ flushFeedback();
     const res = await fetch("/api/whoami", { credentials: "same-origin" });
     if (!res.ok) return;
     const info = await res.json();
-    if (info && info.role === "admin") adminLink.hidden = false;
+    if (info && info.role === "admin") {
+      adminLink.hidden = false;
+      ui.logBox.hidden = false;
+    }
   } catch (e) { /* no gate locally, or offline -- link stays hidden either way */ }
 })();
 

@@ -54,7 +54,17 @@ globals. Tests reach inside them by evaluating the file with `new Function(src +
 "return {…}")` or by lifting a single function out of `app.js` by name (see the `cut`
 helpers in `tools/test/`) — `app.js` itself touches the DOM at load and cannot be
 evaluated whole. Pure logic therefore belongs in `identify.js`, `tags.js`,
-`rekordbox.js`, `dsp.js`, where it can be tested.
+`rekordbox.js`, `dsp.js`, `views.js`, where it can be tested.
+
+**Page layout.** Two modes (`showMode` in `app.js`, remembered in localStorage, `#rekordbox`
+opens the second): *Process files* (drop zone → presets + switches → run, archive preview
+from the ZIP's own entries, click a track row for Camelot/tempo neighbours and the
+`describeResult` reasoning) and *Rekordbox collection*. The one lookups block
+(`#lookups-panel`) is physically moved into whichever mode is showing, so both read the
+same inputs. `views.js` holds the pure parts: `PRESETS`/`matchPreset`, `mixNeighbours`
+(standard Camelot moves, ±6% tempo, half/double time allowed), `archiveTree`. The
+developer log is hidden except on localhost or for an admin session; anything a user must
+read goes through `notify()` to a visible status line, not only to the log.
 
 **Genre decision** is `resolveGenreFrom(context, deps)` in `identify.js` (moved out of
 `app.js` so it can be measured without a browser). Order: user correction → remix goes
@@ -74,7 +84,7 @@ chunk); FLAC/M4A pass through untouched. Existing frames are carried across
 being written are replaced. v2.2, unsynchronised tags and flagged frames are skipped,
 not copied. `TKEY` holds Camelot (`8A`), not spec notation, on purpose.
 
-**Rekordbox exchange** (`rekordbox.js`, UI in step 4): reads a collection export with a
+**Rekordbox exchange** (`rekordbox.js`, UI in the Rekordbox mode): reads a collection export with a
 quote-aware scanner (not DOMParser — needs exact byte offsets and must run in Node
 tests), resolves genres from `Artist`/`Name` (no audio), and `buildGenreImport` emits
 an XML containing **only the changed tracks, each copied byte-for-byte from the export

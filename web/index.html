@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Музыкальный сортир</title>
-<link rel="stylesheet" href="css/styles.css?v=2026.09.28.4">
+<link rel="stylesheet" href="css/styles.css?v=2026.10.13.1">
 </head>
 <body>
 
@@ -16,18 +16,17 @@
         <button type="button" class="lang-button" data-lang="ru">RU</button>
         <button type="button" class="lang-button" data-lang="en">EN</button>
       </div>
+      <!-- Hidden by default. Shown by app.js only after /api/whoami confirms the
+           session's role is admin -- the check that actually protects the data
+           lives server-side in functions/api/admin/feedback.js; this is just so a
+           regular tester never sees a link to a page that would 403 them anyway. -->
+      <a href="/admin.html" id="admin-link" class="link-button" data-i18n="gate.admin" hidden></a>
       <!-- A real form POST, not a link. The session lives in an HttpOnly cookie
            that only the server can clear, and POST is what keeps another site
            from signing the user out through a stray link: with SameSite=Lax a
            cross-site navigation would still carry the cookie, a POST would not.
            Does nothing under `python3 -m http.server`, which has no gate. -->
-      <!-- Hidden by default. Shown by app.js only after /api/whoami confirms
-                 the session's role is admin -- the check that actually protects the
-                            data lives server-side in functions/api/admin/feedback.js; this is
-                                       just so a regular tester never sees a link to a page that would 403
-                                                  them anyway. -->
-                                                        <a href="/admin.html" id="admin-link" class="link-button" data-i18n="gate.admin" hidden></a>
-                                                              <form method="POST" action="/logout" class="signout-form">
+      <form method="POST" action="/logout" class="signout-form">
         <button type="submit" class="link-button" data-i18n="gate.signout"></button>
       </form>
     </div>
@@ -35,22 +34,50 @@
   <p class="tagline" data-i18n="app.tagline"></p>
 </header>
 
+<!-- Two jobs that share nothing but the genre lookups: a folder of audio in, a
+     ZIP out; or a Rekordbox collection export in, an XML to import back out.
+     They used to be steps 1-3 and step 4 of one page, which read as though the
+     Rekordbox part needed the files from step 1. -->
+<nav class="mode-switch" role="tablist" data-i18n-aria="mode.label">
+  <button type="button" class="mode-card" role="tab" id="mode-files" data-mode="files" aria-controls="mode-files-panel">
+    <span class="mode-title" data-i18n="mode.files"></span>
+    <span class="mode-hint" data-i18n="mode.filesHint"></span>
+  </button>
+  <button type="button" class="mode-card" role="tab" id="mode-rekordbox" data-mode="rekordbox" aria-controls="mode-rekordbox-panel">
+    <span class="mode-title" data-i18n="mode.rekordbox"></span>
+    <span class="mode-hint" data-i18n="mode.rekordboxHint"></span>
+  </button>
+</nav>
+
 <main id="app-main">
+
+<div class="mode-panel" id="mode-files-panel" role="tabpanel" aria-labelledby="mode-files">
 
 <section class="step" id="step-1">
   <h2><span class="step-number">1</span> <span data-i18n="step1.title"></span></h2>
-  <div class="picker">
-    <button type="button" class="button" id="pick-files" data-i18n="step1.pickFiles"></button>
-    <button type="button" class="button secondary" id="pick-folder" data-i18n="step1.pickFolder"></button>
+  <div class="dropzone" id="dropzone">
+    <p class="dropzone-title" data-i18n="step1.drop"></p>
+    <div class="picker">
+      <button type="button" class="button" id="pick-files" data-i18n="step1.pickFiles"></button>
+      <button type="button" class="button secondary" id="pick-folder" data-i18n="step1.pickFolder"></button>
+    </div>
+    <p class="hint" id="picker-hint" data-i18n="step1.hint"></p>
     <input type="file" id="file-input" multiple accept=".mp3,.wav,.flac,.m4a,audio/*" hidden>
     <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
   </div>
-  <p class="hint" id="picker-hint" data-i18n="step1.hint"></p>
   <div class="file-summary" id="file-summary" hidden></div>
 </section>
 
 <section class="step" id="step-2">
   <h2><span class="step-number">2</span> <span data-i18n="step2.title"></span></h2>
+
+  <div class="presets" role="group" data-i18n-aria="preset.label">
+    <button type="button" class="chip" data-preset="library" data-i18n="preset.library"></button>
+    <button type="button" class="chip" data-preset="everything" data-i18n="preset.everything"></button>
+    <button type="button" class="chip" data-preset="analyze" data-i18n="preset.analyze"></button>
+    <button type="button" class="chip" data-preset="genres" data-i18n="preset.genres"></button>
+    <span class="hint preset-custom" id="preset-custom" data-i18n="preset.custom" hidden></span>
+  </div>
 
   <div class="options-grid">
     <label class="toggle"><input type="checkbox" id="step-fix-names"> <span data-i18n="step2.fixNames"></span>
@@ -63,7 +90,9 @@
       <em data-i18n="step2.loudnessHint"></em></label>
   </div>
 
-  <fieldset class="panel" id="loudness-panel" disabled>
+  <!-- Shown only while loudness is switched on: four settings that do nothing
+       otherwise were a quarter of the page for most batches. -->
+  <fieldset class="panel" id="loudness-panel" disabled hidden>
     <legend data-i18n="loudness.legend"></legend>
     <div class="field-row">
       <label><span data-i18n="loudness.mode"></span>
@@ -97,19 +126,24 @@
     </div>
   </fieldset>
 
-  <fieldset class="panel">
-    <legend data-i18n="lookups.legend"></legend>
-    <div class="field-row checkboxes">
-      <label><input type="checkbox" id="use-musicbrainz" checked> <span data-i18n="lookups.musicbrainz"></span></label>
-      <label><input type="checkbox" id="use-discogs" checked> <span data-i18n="lookups.discogs"></span></label>
-    </div>
-    <div class="field-row">
-      <label class="grow"><span data-i18n="lookups.lastfm"></span>
-        <input type="text" id="lastfm-key" data-i18n-placeholder="lookups.lastfmPlaceholder" autocomplete="off">
-      </label>
-    </div>
-    <p class="hint" data-i18n="lookups.hint"></p>
-  </fieldset>
+  <div class="lookups-slot" data-slot="files">
+    <!-- One set of lookup switches serves both modes: app.js moves this block
+         into whichever mode is showing, so a key typed in one is the key used
+         by the other. -->
+    <details class="panel lookups" id="lookups-panel">
+      <summary><span data-i18n="lookups.legend"></span> <span class="lookups-state" id="lookups-state"></span></summary>
+      <div class="field-row checkboxes">
+        <label><input type="checkbox" id="use-musicbrainz" checked> <span data-i18n="lookups.musicbrainz"></span></label>
+        <label><input type="checkbox" id="use-discogs" checked> <span data-i18n="lookups.discogs"></span></label>
+      </div>
+      <div class="field-row">
+        <label class="grow"><span data-i18n="lookups.lastfm"></span>
+          <input type="text" id="lastfm-key" data-i18n-placeholder="lookups.lastfmPlaceholder" autocomplete="off">
+        </label>
+      </div>
+      <p class="hint" data-i18n="lookups.hint"></p>
+    </details>
+  </div>
 </section>
 
 <section class="step" id="step-3">
@@ -120,6 +154,9 @@
     <button type="button" class="button secondary" id="download" disabled data-i18n="step3.download"></button>
     <button type="button" class="button" id="reset" disabled data-i18n="step3.reset"></button>
   </div>
+  <!-- What used to be said only in the developer log: why nothing started, how
+       the batch ended, whether the archive was built. -->
+  <p class="status-line" id="run-status" role="status" hidden></p>
   <p class="hint" id="reset-hint" hidden data-i18n="step3.resetHint"></p>
 
   <div class="progress-block" id="progress-block" hidden>
@@ -135,17 +172,17 @@
     </div>
   </div>
 
-  <p class="hint feedback-hint" data-i18n="feedback.hint"></p>
-  <div class="feedback-bar">
-    <button type="button" class="button small" id="feedback-export" data-i18n="feedback.export"></button>
-    <button type="button" class="button small" id="feedback-clear" data-i18n="feedback.clear"></button>
+  <div class="archive-preview" id="archive-preview" hidden>
+    <h3 data-i18n="archive.title"></h3>
+    <p class="hint archive-summary" id="archive-summary"></p>
+    <div class="archive-tree" id="archive-tree"></div>
   </div>
 
   <div class="table-tools" id="table-tools" hidden>
     <input type="search" id="table-filter" data-i18n-placeholder="table.filterPlaceholder" autocomplete="off">
     <span class="hint" id="table-count"></span>
-    <span class="hint" data-i18n="table.sortHint"></span>
   </div>
+  <p class="hint table-hint" id="table-hint" data-i18n="table.rowHint" hidden></p>
 
   <div class="results-wrap">
     <table class="results" id="results" hidden>
@@ -156,7 +193,7 @@
           <th class="sortable" data-sort="genre" data-i18n="table.genre"></th>
           <th class="sortable" data-sort="bpm" data-i18n="table.bpm"></th>
           <th class="sortable" data-sort="key" data-i18n="table.key"></th>
-          <th class="sortable" data-sort="loudness" data-i18n="table.loudness"></th>
+          <th class="sortable" data-sort="loudness" data-i18n="table.loudness" data-i18n-title="table.loudnessHint"></th>
           <th data-i18n="table.output"></th>
         </tr>
       </thead>
@@ -164,33 +201,56 @@
     </table>
   </div>
 
-  <details class="log-box" id="log-box">
+  <div id="feedback-block" hidden>
+    <p class="hint feedback-hint" data-i18n="feedback.hint"></p>
+    <div class="feedback-bar">
+      <button type="button" class="button small" id="feedback-export" data-i18n="feedback.export"></button>
+      <button type="button" class="button small" id="feedback-clear" data-i18n="feedback.clear"></button>
+    </div>
+  </div>
+
+  <!-- For the author and admins only: app.js reveals it on localhost or for an
+       admin session. Everything a user needs from it is in the status line and
+       in the details row under each track. -->
+  <details class="log-box" id="log-box" hidden>
     <summary data-i18n="log.title"></summary>
     <pre id="log"></pre>
   </details>
 </section>
 
+</div>
+
 <!-- Genres for a whole Rekordbox collection, from its XML export. No audio is
      read: artist and title come from the export, tempo and key are already in
      it. What comes out is an XML holding only the tracks whose genre changed,
      each copied from the export with that one attribute altered. -->
+<div class="mode-panel" id="mode-rekordbox-panel" role="tabpanel" aria-labelledby="mode-rekordbox" hidden>
+
 <section class="step" id="step-rekordbox">
-  <h2><span class="step-number">4</span> <span data-i18n="rb.title"></span></h2>
-  <p class="hint" data-i18n="rb.intro"></p>
-  <div class="picker">
-    <button type="button" class="button secondary" id="rb-pick" data-i18n="rb.pick"></button>
+  <h2><span class="step-number">1</span> <span data-i18n="rb.title1"></span></h2>
+  <p class="hint rb-lead" data-i18n="rb.intro"></p>
+  <div class="dropzone compact" id="rb-dropzone">
+    <p class="dropzone-title" data-i18n="rb.drop"></p>
+    <div class="picker">
+      <button type="button" class="button" id="rb-pick" data-i18n="rb.pick"></button>
+    </div>
+    <p class="hint" data-i18n="rb.exportHint"></p>
     <input type="file" id="rb-input" accept=".xml,text/xml,application/xml" hidden>
   </div>
-  <p class="hint" id="rb-summary" hidden></p>
+  <p class="status-line" id="rb-summary" hidden></p>
+</section>
 
+<section class="step" id="step-rb-find">
+  <h2><span class="step-number">2</span> <span data-i18n="rb.title2"></span></h2>
+  <p class="hint" id="rb-wait" data-i18n="rb.wait"></p>
   <div id="rb-controls" hidden>
     <div class="field-row checkboxes">
       <label><input type="checkbox" id="rb-only-empty" checked> <span data-i18n="rb.onlyEmpty"></span></label>
     </div>
+    <div class="lookups-slot" data-slot="rekordbox"></div>
     <div class="run-bar">
       <button type="button" class="button primary" id="rb-start" data-i18n="rb.start"></button>
       <button type="button" class="button" id="rb-stop" hidden data-i18n="rb.stop"></button>
-      <button type="button" class="button secondary" id="rb-download" disabled data-i18n="rb.download"></button>
     </div>
     <div class="progress-block" id="rb-progress" hidden>
       <div class="progress-line">
@@ -199,7 +259,7 @@
         <span class="counter" id="rb-counter">0 / 0</span>
       </div>
     </div>
-    <p class="hint" id="rb-status" hidden></p>
+    <p class="status-line" id="rb-status" role="status" hidden></p>
   </div>
 
   <div class="results-wrap">
@@ -217,19 +277,25 @@
       <tbody id="rb-body"></tbody>
     </table>
   </div>
-
-  <details class="log-box" id="rb-howto">
-    <summary data-i18n="rb.howTo"></summary>
-    <ol class="rb-steps">
-      <li data-i18n="rb.step1"></li>
-      <li data-i18n="rb.step2"></li>
-      <li data-i18n="rb.step3"></li>
-      <li data-i18n="rb.step4"></li>
-      <li data-i18n="rb.step5"></li>
-    </ol>
-    <p class="hint" data-i18n="rb.warning"></p>
-  </details>
 </section>
+
+<section class="step" id="step-rb-import">
+  <h2><span class="step-number">3</span> <span data-i18n="rb.title3"></span></h2>
+  <div class="run-bar">
+    <button type="button" class="button primary" id="rb-download" disabled data-i18n="rb.download"></button>
+  </div>
+  <p class="status-line" id="rb-written" role="status" hidden></p>
+  <ol class="rb-steps" id="rb-howto">
+    <li data-i18n="rb.step1"></li>
+    <li data-i18n="rb.step2"></li>
+    <li data-i18n="rb.step3"></li>
+    <li data-i18n="rb.step4"></li>
+    <li data-i18n="rb.step5"></li>
+  </ol>
+  <p class="banner" data-i18n="rb.warning"></p>
+</section>
+
+</div>
 
 </main>
 
@@ -242,9 +308,10 @@
 
 <!-- jszip 3.10.1, served from our own origin: it handles every file the user
      loaded, so it is not a dependency to fetch from someone else's server. -->
-<script src="js/i18n.js?v=2026.09.28.4" defer></script>
-<script src="js/feedback.js?v=2026.09.28.4" defer></script>
-<script src="js/tags.js?v=2026.09.28.4" defer></script>
-<script src="js/app.js?v=2026.09.28.4" defer></script>
+<script src="js/i18n.js?v=2026.10.13.1" defer></script>
+<script src="js/feedback.js?v=2026.10.13.1" defer></script>
+<script src="js/tags.js?v=2026.10.13.1" defer></script>
+<script src="js/views.js?v=2026.10.13.1" defer></script>
+<script src="js/app.js?v=2026.10.13.1" defer></script>
 </body>
 </html>
