@@ -8,9 +8,10 @@ with the tracks tagged, sorted into folders and listed in playlists that
 Rekordbox imports directly.
 
 **The audio never leaves the browser.** Decoding, analysis and building the
-archive all happen on the machine the page is open on. The only thing sent out
-is text — artist and title — to ask Discogs, MusicBrainz and Last.fm what genre
-a track is. The original files on disk are never modified.
+archive all happen on the machine the page is open on. The only things sent out
+are text — artist and title — to ask Discogs, MusicBrainz and Last.fm what genre
+a track is, and after each run an anonymous count: how many tracks, which mode,
+which app version, with no names and no audio. The original files on disk are never modified.
 
 Live at [sortirovator.pages.dev](https://sortirovator.pages.dev): a public page
 describing the tool, with the app itself behind an invite code while it is in
@@ -64,9 +65,12 @@ web/                  the app, served as static files
 functions/            Cloudflare Pages Functions
   _middleware.js      invite gate, landing page, robots.txt
   api/feedback.js     receives genre corrections into D1
+  api/usage.js        counts finished runs (numbers only)
   api/whoami.js       who the session belongs to
   api/admin/feedback.js  corrections for review
-db/schema.sql         the one table the functions write to
+  api/admin/usage.js  usage totals for the admin page
+db/schema.sql         every table, for a fresh database
+db/migrations/        changes to apply to an existing one
 tools/
   test_all.sh         runs every test
   test/               the tests

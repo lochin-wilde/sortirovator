@@ -78,10 +78,19 @@ for (const [name, css] of surfaces) {
     + (stray.length ? ` (${[...new Set(stray)].join(", ")})` : ""), stray.length === 0);
 }
 
-// The admin page links styles.css; its inline additions must use tokens, not hex.
-const adminStyle = styleOf(readFileSync("web/admin.html", "utf8"));
-check("админка: дополнительные стили без захардкоженных цветов",
-  !/#[0-9a-f]{3,8}\b/i.test(adminStyle));
+/*
+ * Static pages carry no inline style at all. web/_headers sets style-src 'self',
+ * so a <style> block or a style="" attribute in a page served as a file is
+ * silently dropped by the browser. The admin page's own styles were inline,
+ * and a local preview, which sends no such header, would never show it.
+ * (landing.html and loginPage() are served by the middleware, outside that
+ * policy, and are checked against the tokens above instead.)
+ */
+for (const page of ["web/index.html", "web/admin.html"]) {
+  const html = readFileSync(page, "utf8");
+  check(`${page}: нет встроенных стилей (их блокирует CSP)`,
+    !/<style[\s>]/i.test(html) && !/\sstyle\s*=/i.test(html));
+}
 
 // The link card is drawn by a script, so it is checked against the same system.
 const og = readFileSync("tools/build/make_og_image.py", "utf8");

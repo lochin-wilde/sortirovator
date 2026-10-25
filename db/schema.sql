@@ -1,4 +1,8 @@
--- Genre corrections collected from testers. Run once in the D1 console.
+-- The whole schema, for a fresh database: run once in the D1 console, or
+--   npx wrangler d1 execute <database-name> --remote --file=db/schema.sql
+-- An existing database is brought up to date with the files in db/migrations/.
+
+-- Genre corrections collected from testers.
 --
 -- One row per correction, never updated. The same track corrected twice by the
 -- same person produces two rows on purpose: a changed mind is itself a signal,
@@ -49,3 +53,28 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 
 -- The only query made against it: failures from one address inside the window.
 CREATE INDEX IF NOT EXISTS login_attempts_ip_at ON login_attempts (ip, at);
+
+
+-- Usage counter: one row per finished run, numbers only. Same statement as
+-- db/migrations/0002_usage.sql, which explains each column.
+CREATE TABLE IF NOT EXISTS usage (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- When the server stored it, ISO 8601 UTC. Not the client's clock.
+  at         TEXT    NOT NULL,
+  -- HMAC of the invite label with SESSION_SECRET, cut short. Stable per tester,
+  -- meaningless without the secret, and never the label or the code itself.
+  pseudonym  TEXT    NOT NULL,
+  mode       TEXT    NOT NULL CHECK (mode IN ('files', 'rekordbox')),
+  -- library / everything / analyze / genres / custom; NULL for the Rekordbox mode,
+  -- which has no presets.
+  preset     TEXT,
+  tracks     INTEGER NOT NULL,
+  succeeded  INTEGER NOT NULL,
+  failed     INTEGER NOT NULL,
+  seconds    INTEGER NOT NULL,
+  version    TEXT    NOT NULL
+);
+
+-- Every read is "since some time", and the rate limit is "this tester since some time".
+CREATE INDEX IF NOT EXISTS usage_at ON usage (at);
+CREATE INDEX IF NOT EXISTS usage_pseudonym_at ON usage (pseudonym, at);

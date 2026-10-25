@@ -462,7 +462,9 @@ locally — the behaviour it had before the endpoint existed. Setting it up:
 1. **Storage & Databases → D1** → create a database.
 2. **Pages project → Settings → Bindings** → add a D1 binding named `DB`, for
    Production *and* Preview.
-3. Run `db/schema.sql` in the D1 console.
+3. Run `db/schema.sql` in the D1 console. An existing database is brought up to
+   date with the files in `db/migrations/` instead, each applied once:
+   `npx wrangler d1 execute <database-name> --remote --file=db/migrations/0002_usage.sql`.
 
 `tools/test/test_feedback.mjs` covers the endpoint and the queue without a network or
 a database.

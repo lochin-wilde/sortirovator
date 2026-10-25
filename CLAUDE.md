@@ -102,7 +102,17 @@ GET `/` and `/index.html` get `landing.html` via a rewrite that is only served i
 contains the landing's marker meta tag; `/og.png` is only served if the response is
 `image/*`; `/robots.txt` is generated inline. Anything else → 401 login page. The failure
 direction must stay closed: if a rewrite returns something unexpected, show the login page,
-not what came back. `/api/admin/feedback` re-checks `role === "admin"` itself.
+not what came back. `/api/admin/feedback` and `/api/admin/usage` re-check `role === "admin"` themselves.
+
+**Usage counter** (`functions/api/usage.js`, table `usage`): one row per finished run,
+sent by `reportUsage()` in `app.js` (fire and forget, can never throw into a run) with a
+record built by `usagePayload()` in `views.js`. Numbers, mode, preset and version only;
+the server rebuilds the record from an allowed list and drops everything else. Testers
+appear as a pseudonym, `HMAC(SESSION_SECRET, "usage:" + label)` cut to 10 characters:
+the session carries the invite label, never the code. Rate limit is per pseudonym (30
+per 10 minutes), not per IP, which is never read. Never add a field that could name a
+track, a genre, a path or an address; `test_usage.mjs` checks for exactly that. D1
+changes go in `db/migrations/NNNN_*.sql` and also into `db/schema.sql`.
 
 **Design system**: `web/css/styles.css` tokens (dark default, light via
 `prefers-color-scheme`). `landing.html` and `loginPage()` cannot link it (the gate would

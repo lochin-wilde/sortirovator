@@ -756,3 +756,42 @@ details.why pre {
 @media (max-width: 640px) {
   .mode-switch { padding-left: 1rem; padding-right: 1rem; }
 }
+
+/* ------------------------------------------------------------------ */
+/* Admin page                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Here and not in admin.html: the CSP in web/_headers allows styles only from
+ * our own files ('self'), so a <style> block inside a static page is dropped
+ * by the browser. The admin page's additions had been inline from the start,
+ * which that policy does not allow.
+ */
+.admin-table td, .admin-table th { vertical-align: top; }
+.admin-status { color: var(--muted); margin: 1rem 0; }
+.admin-status.error { color: var(--err); }
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+}
+.stat {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+}
+.stat-value { font-size: 1.4rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat-label { color: var(--muted); font-size: 0.82rem; }
+.stat-breakdowns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.stat-breakdowns h3, .admin-section h3 { margin: 0 0 0.4rem; font-size: 0.9rem; }
+.breakdown { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.breakdown td { padding: 0.2rem 0; border-bottom: 1px solid var(--line); }
+.breakdown td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.admin-section + .admin-section { margin-top: 1.25rem; }
+.admin-table td.num { font-variant-numeric: tabular-nums; }

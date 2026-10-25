@@ -184,3 +184,36 @@ function archiveTree(paths, playlistFolder) {
     a.name.localeCompare(b.name));
   return { folders: list, rootFiles: rootFiles.sort((a, b) => a.localeCompare(b)) };
 }
+
+/* ------------------------------------------------------------------ */
+/* The usage count                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What is sent to /api/usage after a run: how many tracks, how many failed,
+ * how long it took, which mode, preset and version. Nothing else.
+ *
+ * Built from named numbers rather than from the run's results, so there is no
+ * object here a file name or an artist could ride along in. The server checks
+ * the same list again (functions/api/usage.js) and drops anything outside it;
+ * this side keeps it from being sent in the first place.
+ *
+ * Returns null for a run that processed nothing -- a cancel before the first
+ * track -- since a row of zeros counts nothing.
+ */
+function usagePayload(run) {
+  const whole = (value) => (Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0);
+  const tracks = whole(run && run.tracks);
+  if (tracks === 0) return null;
+  const failed = Math.min(whole(run.failed), tracks);
+  const mode = run.mode === "rekordbox" ? "rekordbox" : "files";
+  return {
+    mode,
+    preset: mode === "files" ? (matchPreset(run.steps || {}) || "custom") : null,
+    tracks,
+    succeeded: tracks - failed,
+    failed,
+    seconds: Math.round(Number.isFinite(run.seconds) && run.seconds > 0 ? run.seconds : 0),
+    version: String(run.version || ""),
+  };
+}

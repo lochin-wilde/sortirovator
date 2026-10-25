@@ -1,6 +1,6 @@
 "use strict";
 /*
- * admin.js -- lists genre corrections on admin.html.
+ * admin.js -- usage figures and genre corrections on admin.html.
  *
  * The 403 a non-admin gets back from /api/admin/feedback is the actual
  * security boundary (see functions/api/admin/feedback.js); everything here is
@@ -21,6 +21,7 @@ function initLanguage() {
       setLanguage(button.dataset.lang);
       paint();
       renderRows(lastEntries);
+      if (lastStats) renderStats(lastStats);
     });
   });
   setLanguage(detectInitialLanguage());
@@ -142,7 +143,100 @@ async function load() {
   setStatus(null, false);
 }
 
-el("admin-refresh").addEventListener("click", load);
+/* ------------------------------------------------------------------ */
+/* Usage                                                               */
+/* ------------------------------------------------------------------ */
+
+let lastStats = null;
+
+function number(value) {
+  const n = Number(value) || 0;
+  return n.toLocaleString(getLanguage() === "ru" ? "ru-RU" : "en-GB");
+}
+
+function modeName(mode) {
+  return mode === "rekordbox" ? t("mode.rekordbox") : t("mode.files");
+}
+
+function presetName(preset) {
+  return preset ? t("preset." + preset) : "\u2014";
+}
+
+function breakdown(rows, label, value) {
+  if (!rows.length) return `<tr><td class="hint">${escapeHtml(t("stats.none"))}</td></tr>`;
+  return rows.map((row) =>
+    `<tr><td>${escapeHtml(label(row))}</td><td class="num">${escapeHtml(value(row))}</td></tr>`).join("");
+}
+
+function renderStats(stats) {
+  lastStats = stats;
+  const totals = stats.totals || {};
+  const tiles = [
+    ["stats.users7", totals.users7],
+    ["stats.users30", totals.users30],
+    ["stats.runs30", totals.runs30],
+    ["stats.tracks30", totals.tracks30],
+    ["stats.runsAll", totals.runsAll],
+    ["stats.tracksAll", totals.tracksAll],
+  ];
+  el("stats-totals").innerHTML = tiles.map(([key, value]) =>
+    `<div class="stat"><div class="stat-value">${escapeHtml(number(value))}</div>` +
+    `<div class="stat-label">${escapeHtml(t(key))}</div></div>`).join("");
+
+  el("stats-by-mode").innerHTML = breakdown(stats.byMode || [],
+    (row) => modeName(row.mode),
+    (row) => t("stats.runsTracks", { runs: number(row.runs), tracks: number(row.tracks) }));
+  el("stats-by-preset").innerHTML = breakdown(stats.byPreset || [],
+    (row) => presetName(row.preset), (row) => number(row.runs));
+  el("stats-by-version").innerHTML = breakdown(stats.byVersion || [],
+    (row) => row.version, (row) => number(row.runs));
+
+  el("stats-recent-body").innerHTML = (stats.recent || []).map((run) => `
+    <tr>
+      <td>${formatWhen(run.at)}</td>
+      <td><code>${escapeHtml(run.pseudonym)}</code></td>
+      <td>${escapeHtml(modeName(run.mode))}</td>
+      <td>${escapeHtml(run.mode === "files" ? presetName(run.preset) : "\u2014")}</td>
+      <td class="num">${escapeHtml(number(run.tracks))}</td>
+      <td class="num">${escapeHtml(number(run.failed))}</td>
+      <td class="num">${escapeHtml(number(run.seconds))}</td>
+      <td>${escapeHtml(run.version)}</td>
+    </tr>`).join("");
+}
+
+function setStatsStatus(key, isError) {
+  const status = el("stats-status");
+  status.hidden = !key;
+  el("stats-body").hidden = Boolean(key);
+  if (!key) return;
+  status.dataset.i18n = key;
+  status.textContent = t(key);
+  status.classList.toggle("error", Boolean(isError));
+}
+
+async function loadStats() {
+  setStatsStatus("admin.loading", false);
+  try {
+    const res = await fetch("/api/admin/usage", { credentials: "same-origin" });
+    if (res.status === 403) return setStatsStatus("admin.forbidden", true);
+    if (!res.ok) return setStatsStatus("stats.loadError", true);
+    const stats = await res.json();
+    if (!stats.totals || !Number(stats.totals.runsAll)) {
+      renderStats(stats);
+      return setStatsStatus("stats.empty", false);
+    }
+    renderStats(stats);
+    setStatsStatus(null, false);
+  } catch (e) {
+    setStatsStatus("stats.loadError", true);
+  }
+}
+
+el("admin-refresh").addEventListener("click", () => {
+  loadStats();
+  load();
+});
 
 initLanguage();
+loadStats();
 load();

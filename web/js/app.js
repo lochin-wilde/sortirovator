@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.13.1";
+const APP_VERSION = "2026.10.25.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -143,6 +143,29 @@ function logRaw(line) {
  * for developers. The status line under the run buttons says them now; the log
  * keeps its copy with the timestamp.
  */
+/*
+ * Counts a finished run: numbers only, built by usagePayload() in views.js.
+ *
+ * Fire and forget. Nothing waits for the answer and nothing can throw out of
+ * here -- not a missing fetch, not a refused request, not an offline network --
+ * because a count is worth nothing next to the batch it describes. keepalive
+ * lets it finish if the tab is closed straight after the run.
+ */
+function reportUsage(run) {
+  try {
+    const payload = usagePayload(Object.assign({}, run, { version: APP_VERSION }));
+    if (!payload) return;
+    const sent = fetch("/api/usage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      keepalive: true,
+      body: JSON.stringify(payload),
+    });
+    if (sent && typeof sent.catch === "function") sent.catch(() => {});
+  } catch (e) { /* see above: never the user's problem */ }
+}
+
 function notify(key, values, target) {
   const line = target || ui.runStatus;
   line.textContent = t(key, values);
@@ -1343,6 +1366,7 @@ async function runBatch() {
   let done = 0;
   let failed = 0;
   let started = 0;
+  const startedAt = Date.now();
 
   /*
    * Files run several at a time, but their log blocks are emitted in file
@@ -1421,6 +1445,10 @@ async function runBatch() {
   }
   notify(state.cancelRequested ? "msg.cancelled" : "msg.finished",
     { done: done, failed: failed, produced: state.producedCount });
+  reportUsage({
+    mode: "files", steps: options.steps, tracks: done, failed: failed,
+    seconds: (Date.now() - startedAt) / 1000,
+  });
 }
 
 /*
@@ -2091,6 +2119,7 @@ async function rbRun() {
   let found = 0;
   let guessed = 0;
   let unknown = 0;
+  let failedLookups = 0;
   const started = Date.now();
 
   for (const track of candidates) {
@@ -2111,6 +2140,7 @@ async function rbRun() {
       }, { correctionFor, t });
     } catch (e) {
       resolved = { genre: "Unknown" };
+      failedLookups++;
     }
 
     done++;
@@ -2150,6 +2180,10 @@ async function rbRun() {
   rbUi.start.hidden = false;
   rbUi.stop.hidden = true;
   rbRefreshDownload();
+  reportUsage({
+    mode: "rekordbox", tracks: done, failed: failedLookups,
+    seconds: (Date.now() - started) / 1000,
+  });
 }
 
 function rbDownload() {
