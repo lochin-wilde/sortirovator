@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.25.1";
+const APP_VERSION = "2026.10.25.2";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -1311,6 +1311,51 @@ async function loadGenresMap() {
   return state.genresMap;
 }
 
+/*
+ * Getting the browser to let the page play audio.
+ *
+ * Decoding needs a running AudioContext, and browsers only start one in
+ * response to a user's own click. The context used to be created inside the
+ * batch, after the scripts it needs had been fetched -- so after a network
+ * wait. Chrome counts any earlier click on the page; Safari only allows it
+ * within a few seconds of the click, so on a slow connection the context
+ * stayed suspended, resume() never settled, and the batch hung on "starting"
+ * with nothing on screen to say why.
+ *
+ * So it is started in two places. unlockAudio() runs synchronously inside the
+ * click handler, while the click still counts. audioReady() then checks inside
+ * the batch, and gives up after AUDIO_RESUME_TIMEOUT_MS instead of waiting
+ * forever: the batch stops before it begins and the user is asked to press
+ * the button again, which is itself the click the browser wants.
+ */
+const AUDIO_RESUME_TIMEOUT_MS = 3000;
+
+function unlockAudio() {
+  try {
+    if (!state.audioContext) {
+      state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (state.audioContext.state === "suspended") {
+      const resumed = state.audioContext.resume();
+      if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+    }
+  } catch (e) { /* audioReady() reports it inside the batch */ }
+}
+
+async function audioReady(context, timeoutMs) {
+  if (!context) return false;
+  if (context.state === "running") return true;
+  try {
+    await Promise.race([
+      Promise.resolve(context.resume()),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+  } catch (e) {
+    return false;
+  }
+  return context.state === "running";
+}
+
 async function runBatch() {
   const options = readOptions();
   if (!options.steps.fixNames && !options.steps.sort && !options.steps.bpmKey && !options.steps.loudness) {
@@ -1323,6 +1368,16 @@ async function runBatch() {
   } catch (e) {
     notify("msg.zipUnavailable");
     return;
+  }
+
+  // Only steps that decode audio need it; "fix names" alone reads tags.
+  const needsAudio = options.steps.sort || options.steps.bpmKey || options.steps.loudness;
+  if (needsAudio) {
+    unlockAudio();
+    if (!(await audioReady(state.audioContext, AUDIO_RESUME_TIMEOUT_MS))) {
+      notify("msg.audioBlocked");
+      return;
+    }
   }
   ui.runStatus.hidden = true;
   ui.archivePreview.hidden = true;
@@ -1346,15 +1401,6 @@ async function runBatch() {
   ui.tableFilter.value = "";
   ui.tableTools.hidden = true;
   ui.logBox.open = true;
-
-  // The AudioContext must be created from a user gesture or Safari suspends it.
-  if (!state.audioContext) {
-    state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (state.audioContext.state === "suspended") {
-    await state.audioContext.resume();
-  }
-
 
   await loadGenresMap();
 
@@ -1882,7 +1928,10 @@ ui.loudnessMode.addEventListener("change", () => {
 });
 
 ui.start.addEventListener("click", () => {
-  if (!state.running) runBatch();
+  if (state.running) return;
+  // Before anything awaits: this is the moment the browser counts as the click.
+  unlockAudio();
+  runBatch();
 });
 
 ui.cancel.addEventListener("click", () => {

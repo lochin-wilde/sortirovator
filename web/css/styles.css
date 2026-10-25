@@ -795,3 +795,8 @@ details.why pre {
 .breakdown td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 .admin-section + .admin-section { margin-top: 1.25rem; }
 .admin-table td.num { font-variant-numeric: tabular-nums; }
+
+/* The block's explanation sat flush against the tiles, and the latest-runs
+   heading against the breakdown tables above it. */
+.admin-section > .hint { margin-bottom: 0.9rem; }
+.admin-section h3.stats-recent-title { margin: 1.4rem 0 0.4rem; }

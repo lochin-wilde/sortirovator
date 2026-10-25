@@ -146,6 +146,47 @@ check(".DS_Store — служебный файл macOS", isMacMetadata({ name: "
 check("обычный трек — не служебный", !isMacMetadata({ name: "Artist - Title.mp3" }));
 check("точка в середине имени не мешает", !isMacMetadata({ name: "Mr._Oizo - Flat Beat.mp3" }));
 
+/* ---------- Starting audio ---------- */
+
+/*
+ * A batch that cannot get a running AudioContext must stop and say so, not
+ * hang. Contexts here are stand-ins with the three behaviours a browser shows.
+ */
+// cut() starts at "function", so the async keyword is put back here.
+const audioReady = new Function("async " + cut("audioReady") + "return audioReady;")();
+const ctx = (state, resume) => ({ state, resume });
+check("уже запущенный звук — готов", await audioReady(ctx("running", () => { throw new Error("not called"); }), 50));
+{
+  const c = ctx("suspended", null);
+  c.resume = () => { c.state = "running"; return Promise.resolve(); };
+  check("пауза, браузер разрешил — готов", await audioReady(c, 50));
+}
+{
+  // Bounded here as well, so the old behaviour -- waiting forever -- shows up
+  // as a failure instead of a test run that never ends.
+  const ready = await Promise.race([
+    audioReady(ctx("suspended", () => new Promise(() => {})), 60),
+    new Promise((resolve) => setTimeout(() => resolve("завис"), 1000)),
+  ]);
+  check("браузер молчит — не готов, без зависания", ready === false);
+}
+check("браузер отказал — не готов", await audioReady(ctx("suspended", () => Promise.reject(new Error("NotAllowed"))), 50) === false);
+check("resume бросает сразу — не готов", await audioReady(ctx("suspended", () => { throw new Error("x"); }), 50) === false);
+check("нет контекста — не готов", await audioReady(null, 50) === false);
+
+// The click handler has to start audio before anything in it awaits; after a
+// network wait Safari no longer counts the click.
+const startHandler = appSrc.slice(appSrc.indexOf('ui.start.addEventListener("click"'));
+const handlerBody = startHandler.slice(0, startHandler.indexOf("});"));
+check("кнопка запуска включает звук до запуска прогона",
+  handlerBody.includes("unlockAudio()") && handlerBody.indexOf("unlockAudio()") < handlerBody.indexOf("runBatch()"));
+const runBatchSrc = cut("runBatch");
+check("прогон без звука останавливается с сообщением, а не ждёт",
+  /audioReady\(state\.audioContext, AUDIO_RESUME_TIMEOUT_MS\)/.test(runBatchSrc) &&
+  runBatchSrc.indexOf('notify("msg.audioBlocked")') < runBatchSrc.indexOf("state.running = true"));
+check("в прогоне не осталось ожидания resume() без срока",
+  !/await state\.audioContext\.resume\(\)/.test(appSrc));
+
 /* ---------- Translations ---------- */
 
 // Lines of one language's table, by its opening line, up to the next table.
