@@ -211,6 +211,20 @@ function usableTag(value) {
   return PLACEHOLDER_TAG.test(text) ? null : text;
 }
 
+/*
+ * A title tag that repeats the artist in front: "KASHIN - HEY DJ DUB" for the
+ * artist KASHIN. Left in, the dash reads as the "Title - Remixer Kind" form,
+ * so "HEY DJ" was looked up as a remixer and the track filed as Rock. Only an
+ * exact repeat of the artist followed by a dash is removed.
+ */
+function withoutArtistPrefix(title, artist) {
+  if (typeof title !== "string" || typeof artist !== "string" || !artist.trim()) return title;
+  const head = artist.trim().toLowerCase();
+  if (!title.toLowerCase().startsWith(head)) return title;
+  const rest = title.slice(head.length).match(/^\s*[-\u2013\u2014]\s*(.+)$/);
+  return rest && rest[1].trim() ? rest[1].trim() : title;
+}
+
 const MIX_MARKER = /\b(remix|mix|edit|vip|bootleg|flip|rework|version)\b/i;
 
 /*
@@ -766,7 +780,14 @@ function coreTitle(title) {
  * accurate about the artist and useless about the file.
  */
 const REMIX_KINDS = /\b(remix|rmx|mix|edit|flip|bootleg|rework|vip|mashup|version|dub|refix|redrum)\b/i;
-const NON_REMIXER_WORDS = /^(extended|original|radio|club|instrumental|acoustic|live|remaster(ed)?|the|a|an|feat\.?|ft\.?|featuring|with)$/i;
+/*
+ * Words that describe a version rather than name whoever made it. They are only
+ * stripped from the front, so a name that merely contains one survives. Before
+ * "vocal" was here, "Be Alone (Vocal Edit)" was looked up as a remix by an
+ * artist called Vocal, Discogs found one, and a UK garage track came out
+ * Classical; "(UK Garage Mix)" named a remixer called "UK Garage".
+ */
+const NON_REMIXER_WORDS = /^(extended|original|radio|club|instrumental|acoustic|live|remaster(ed)?|vocal|clean|dirty|explicit|short|long|main|full|album|single|alternate|alt|intro|outro|acapella|uk|us|garage|house|dance|the|a|an|feat\.?|ft\.?|featuring|with)$/i;
 
 function remixerFromTitle(title) {
   const { version } = splitTitle(title);
@@ -824,6 +845,14 @@ function mergeTitleVersion(originalTitle, matchedTitle) {
  * fires as many simultaneous requests as there are workers and gets throttled or
  * banned. Every call funnels through here.
  */
+/*
+ * The gap is measured from when the previous task *finished*, not from when it
+ * started. A task is one lookup including its own retries, so measuring from
+ * the start let the next lookup fire the moment a slow, retried one ended --
+ * 141 ms after its last request, in a 92-track batch -- straight into the
+ * throttle that had just refused it. Of 86 MusicBrainz requests in that batch
+ * 59 were refused with 503, and Discogs dropped 21 of 55.
+ */
 function makeRateLimiter(minIntervalMs) {
   let lastAt = 0;
   let chain = Promise.resolve();
@@ -831,16 +860,24 @@ function makeRateLimiter(minIntervalMs) {
     const run = async () => {
       const wait = Math.max(0, minIntervalMs - (Date.now() - lastAt));
       if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-      lastAt = Date.now();
-      return task();
+      try {
+        return await task();
+      } finally {
+        lastAt = Date.now();
+      }
     };
     chain = chain.then(run, run);
     return chain;
   };
 }
 
-const rateLimited = makeRateLimiter(1000);        // MusicBrainz
-const discogsRateLimited = makeRateLimiter(2500); // Discogs, 25/min
+/*
+ * Both a little under the published limits. Requests leave on the minute but
+ * arrive with network jitter, and two that land closer than the limit are
+ * enough to trip it: at exactly 1000 ms MusicBrainz still refused some.
+ */
+const rateLimited = makeRateLimiter(1100);        // MusicBrainz, 1/s
+const discogsRateLimited = makeRateLimiter(3000); // Discogs, 25/min
 
 /*
  * iTunes. Apple documents "approximately 20 calls per minute" and publishes no
@@ -861,6 +898,25 @@ const itunesRateLimited = makeRateLimiter(1000);
  * is swallowed. Retrying with a widening delay turns a transient throttle back
  * into a real answer instead of a silent miss.
  */
+const RETRY_BACKOFF_MS = 2000;
+
+/*
+ * MusicBrainz refuses a share of browser requests whatever the pace: in the
+ * 92-track batch, gaps of 1.2 s and of 3-5 s were refused at the same ~40%.
+ * Its service identifies well-behaved clients by User-Agent, which a page
+ * cannot set, so this looks like the price of asking from a browser rather
+ * than of asking too fast. With three attempts 20 of 182 lookups were lost
+ * outright -- reported as "no match" -- and since the refusals are
+ * independent, more attempts are what recovers them. Only MusicBrainz gets
+ * them: elsewhere a failure is more likely real, and offline every extra
+ * attempt is time spent waiting.
+ */
+const MUSICBRAINZ_ATTEMPTS = 5;
+
+function musicbrainzJson(url) {
+  return fetchJson(url, MUSICBRAINZ_ATTEMPTS);
+}
+
 async function fetchJson(url, attempts) {
   const maxAttempts = attempts || 3;
   let lastError = null;
@@ -869,7 +925,8 @@ async function fetchJson(url, attempts) {
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       if (response.status === 503 || response.status === 429) {
         lastError = new Error("HTTP " + response.status + " (rate limited)");
-        await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+        if (attempt === maxAttempts - 1) break;
+        await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS * (attempt + 1)));
         continue;
       }
       if (!response.ok) throw new Error("HTTP " + response.status);
@@ -877,7 +934,12 @@ async function fetchJson(url, attempts) {
     } catch (e) {
       lastError = e;
       if (attempt === maxAttempts - 1) break;
-      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+      /*
+       * Same wait as a 503. Discogs's refusals reached the page as network
+       * errors -- status 0, no response to read -- rather than as a 429, and a
+       * 600 ms retry walked straight back into whatever had refused it.
+       */
+      await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS * (attempt + 1)));
     }
   }
   throw lastError || new Error("request failed");
@@ -949,7 +1011,7 @@ async function searchMusicbrainzRecordings(artist, track, limit) {
   const url = MUSICBRAINZ_BASE + "/recording/?query=" + encodeURIComponent(query) +
     "&limit=" + (limit || 8) + "&fmt=json";
   try {
-    const data = await rateLimited(() => fetchJson(url));
+    const data = await rateLimited(() => musicbrainzJson(url));
     return data.recordings || [];
   } catch (e) {
     lastLookupError = "MusicBrainz search failed: " + e.message;
@@ -990,7 +1052,7 @@ async function musicbrainzRecordingTags(recordingId) {
   if (!isMbid(recordingId)) return [];
   const url = MUSICBRAINZ_BASE + "/recording/" + recordingId + "?inc=tags+genres&fmt=json";
   try {
-    const data = await rateLimited(() => fetchJson(url));
+    const data = await rateLimited(() => musicbrainzJson(url));
     return extractGenreNames(data);
   } catch (e) {
     lastLookupError = "MusicBrainz recording lookup failed: " + e.message;
@@ -1019,11 +1081,11 @@ async function musicbrainzArtistTags(artist) {
   try {
     const searchUrl = MUSICBRAINZ_BASE + "/artist/?query=" +
       encodeURIComponent("artist:(" + luceneEscape(artist) + ")") + "&limit=1&fmt=json";
-    const found = await rateLimited(() => fetchJson(searchUrl));
+    const found = await rateLimited(() => musicbrainzJson(searchUrl));
     const candidate = (found.artists || [])[0];
     if (candidate && isMbid(candidate.id) && textSimilarity(artist, candidate.name || "") >= IDENTIFY_MIN_ARTIST_SIMILARITY) {
       const url = MUSICBRAINZ_BASE + "/artist/" + candidate.id + "?inc=tags+genres&fmt=json";
-      const data = await rateLimited(() => fetchJson(url));
+      const data = await rateLimited(() => musicbrainzJson(url));
       names = extractGenreNames(data);
     }
   } catch (e) {
@@ -1290,7 +1352,7 @@ async function musicbrainzEarliestYear(artist, track) {
     const query = 'artist:"' + luceneEscape(artist) + '" AND recording:"' + luceneEscape(track) + '"';
     const url = MUSICBRAINZ_BASE + "/recording/?query=" + encodeURIComponent(query) +
       "&limit=25&fmt=json";
-    const data = await rateLimited(() => fetchJson(url));
+    const data = await rateLimited(() => musicbrainzJson(url));
     let earliest = null;
     for (const recording of (data.recordings || [])) {
       if (textSimilarity(track, recording.title || "") < IDENTIFY_MIN_TITLE_SIMILARITY) continue;

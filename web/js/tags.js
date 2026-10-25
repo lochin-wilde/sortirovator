@@ -41,7 +41,22 @@ function decodeText(bytes, encoding) {
 }
 
 function cleanTagValue(value) {
-  return (value || "").replace(/ +$/g, "").trim();
+  return (value || "").replace(/^\u0000+|\u0000+$/g, "").replace(/ +$/g, "").trim();
+}
+
+/*
+ * The values in one ID3 text frame.
+ *
+ * A text frame may end in a terminating NUL -- one byte, or two in UTF-16 --
+ * and in ID3v2.4 a NUL also separates several values ("Artist A<NUL>Artist
+ * B"). Decoded as one string, both survived into the result: in a batch of 92
+ * UK garage tracks 48 had them, so "Aviso<NUL>" went out to Discogs and
+ * MusicBrainz, matched nothing, and came back Unknown -- 71% of those tracks
+ * against 52% of the rest -- and was then written back into the new tags and
+ * into the playlists. trim() does not touch NUL; it is not whitespace.
+ */
+function id3TextValues(text) {
+  return String(text || "").split("\u0000").map(cleanTagValue).filter(Boolean);
 }
 
 // ID3 genre frames may hold a bare ID3v1 index such as "(17)" or "17".
@@ -108,8 +123,16 @@ function parseId3v2(bytes) {
     if (field) {
       const payload = bytes.subarray(offset + headerLength, offset + headerLength + frameSize);
       if (payload.length > 1) {
-        const text = decodeText(payload.subarray(1), payload[0]);
-        result[field] = field === "genre" ? normalizeGenreValue(text) : cleanTagValue(text);
+        const values = id3TextValues(decodeText(payload.subarray(1), payload[0]));
+        if (field === "genre") {
+          result.genre = values.map(normalizeGenreValue).find(Boolean) || null;
+        } else if (field === "artist") {
+          // Several artists are one credit: "A, B" is how the rest of the app,
+          // and every DJ tool, writes them.
+          result.artist = values.join(", ") || null;
+        } else {
+          result[field] = values[0] || null;
+        }
       }
     }
     offset += headerLength + frameSize;

@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.25.2";
+const APP_VERSION = "2026.10.25.3";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
@@ -707,7 +707,7 @@ async function processFile(file, options, slot) {
    */
   let parsed = parseFilename(tidied.cleaned + fileExtension(file.name));
   let artist = usableTag(tags.artist) || parsed.artist;
-  let track = usableTag(tags.title) || parsed.track;
+  let track = withoutArtistPrefix(usableTag(tags.title) || parsed.track, artist);
   let stem = tidied.cleaned;
   let recordingId = null;
   // Recorded up front: the results table shows the artist regardless of which
@@ -2174,6 +2174,7 @@ async function rbRun() {
   for (const track of candidates) {
     if (rb.stopRequested) break;
     const names = lookupNames(track.attrs, parseFilename);
+    names.title = withoutArtistPrefix(names.title, names.artist);
     const was = (track.attrs.Genre || "").trim();
     let resolved = { genre: "Unknown" };
     try {
