@@ -49,3 +49,7 @@ ground-truth/
 # Local values for the gate's secrets. They are set in Cloudflare, not here.
 .dev.vars
 wrangler.toml.local
+
+# Wrangler's local cache (which Cloudflare account it last used). Created by
+# running `npx wrangler d1 ...` from this folder; never part of the project.
+.wrangler/
