@@ -16,7 +16,8 @@
 // The worker's own URL carries ?v=…; pass it on so its imports are not served
 // from cache after the worker itself has been refreshed.
 const WORKER_VERSION = new URLSearchParams(self.location.search).get("v") || "dev";
-importScripts("dsp.js?v=" + WORKER_VERSION, "loudness.js?v=" + WORKER_VERSION, "keycnn.js?v=" + WORKER_VERSION);
+importScripts("dsp.js?v=" + WORKER_VERSION, "loudness.js?v=" + WORKER_VERSION, "keycnn.js?v=" + WORKER_VERSION,
+  "beatgrid.js?v=" + WORKER_VERSION);
 
 // The Python version analyses the whole file. Capping analysis keeps a batch
 // usable in a browser; BPM and key are both stable well inside this window.
@@ -94,6 +95,7 @@ async function handleAnalyze(msg) {
     keyConfident: false,
     keySecond: null,
     keyMethod: null,
+    grid: null,
     integratedLufs: null,
     shortTermMaxLufs: null,
     truePeakDb: null,
@@ -106,6 +108,12 @@ async function handleAnalyze(msg) {
     result.bpmMode = tempo.mode;
     result.bpmMin = tempo.min;
     result.bpmMax = tempo.max;
+    // The grid is always worked out with the tempo; whether it is written is
+    // decided on the finished archive (app.js, downloadZip).
+    if (tempo.bpm) {
+      report("grid", 0);
+      result.grid = estimateBeatGrid(session.monoNative, session.sampleRate, tempo.bpm, tempo.mode);
+    }
     report("key", 0);
     // The network wants 44.1 kHz; the main thread sends a resampled copy
     // only when the file is at another rate.

@@ -119,6 +119,7 @@ is a record of what happened rather than live interface text.
 | `admin.html` | Review of genre corrections, admin role only |
 | `css/styles.css` | Design tokens and styling, dark and light. The landing and login page copy the same tokens inline; `tools/test/test_style.mjs` fails if they drift |
 | `js/dsp.js` | FFT, onset/tempogram BPM, CQT chroma key (the fallback) |
+| `js/beatgrid.js` | Beat grid: kick-band onset envelope, comb fit to 0.01 BPM, half-beat and confidence models |
 | `js/keycnn.js` | Key network: madmom's spectrogram and Korzeniowski & Widmer's CNN, ported for inference; weights in `data/key_cnn.bin` (CC BY-NC-SA 4.0) |
 | `js/loudness.js` | ITU-R BS.1770 loudness, true peak, limiter, silence trim, resampler, WAV/MP3 encoders |
 | `js/tags.js` | Reads ID3v2, Vorbis comments and MP4 ilst; writes ID3v2.4 into MP3 and WAV |
@@ -243,6 +244,53 @@ On the 165-track set, 160 came out constant and 5 dynamic. The five are exactly
 the material that should be: a 1979 Sister Sledge disco record played by a live
 band, two live-feel Crazy P and jazz-mix tracks, and a track ripped from a
 continuous DJ mix.
+
+### Beat grid
+
+`js/beatgrid.js`, measured by `tools/measure/measure_grid.mjs` against every
+beat in Rekordbox's own analysis files (`rekordbox_anlz.py --grids`), and
+against the Serato grids already inside the library's MP3s.
+
+**Method.** Onset envelope of the kick band (30–150 Hz, 6 ms hops), a comb
+fitted over the analysed two minutes: every candidate period within ±1.5 BPM
+of the detected tempo and every phase, the grid landing on the most kick
+energy winning, then refined to 0.002 BPM and rounded to 0.01. A full-band
+envelope was tried first and locked onto off-beat hats and bass about a
+quarter of the time.
+
+**Half a beat out** remains the main failure — 15% of grids on the train half,
+in every genre. A small logistic model over eight frequency bands' on/off
+evidence picks the phase; it gains little (84.9% against 83.7% for never
+flipping) and is kept because it is free. A second model scores confidence;
+below 0.75 the grid is withheld as "the beat is ambiguous". Averaging the kick
+across all beats to locate its onset more precisely did not narrow the spread
+and was dropped.
+
+**Timelines.** The browser and ffmpeg decode MP3s sample-identically (checked
+on all three header types, 44.1 and 48 kHz). Rekordbox and Serato do not trim
+LAME's encoder delay, so on LAME MP3s their beats sit later than ours: Serato
+by about 47 ms (from 699 Serato grids in the files), Rekordbox by 17–45 ms
+depending on the file. Without a LAME header all three agree within ~5 ms.
+`gridOffsetFor` in `tags.js` holds the numbers.
+
+**Held-out half** (2057 one-tempo tracks; nothing was chosen on them):
+
+| | Before: whole BPM, best phase | Every grid | Grids it writes (47%) |
+|---|---|---|---|
+| F-measure ≥ 0.8 vs Rekordbox | 54.6% | 74.3% | **89.8%** |
+| BPM within 0.05 of Rekordbox | 75.9% | 89.2% | 91.9% |
+| Off by > 70 ms at the end | 37.2% | 21.7% | 10.1% |
+
+McNemar on F ≥ 0.8, before against every grid: 562 fixed, 157 broken, χ² = 227.
+Against the Serato grids in held-out files, the grids it writes are within
+20 ms in 77.9% and within 70 ms in 91.5%, median 8.9 ms.
+
+**Not solved.** The "no grid" verdict does not pick out tempo-changing tracks:
+it withholds 48% of those and 53% of one-tempo tracks alike; what it does is
+withhold doubtful grids. Rekordbox XML `TEMPO` export is not built — it needs
+the absolute path the archive will be unpacked to, and must never apply to a
+track already in the collection. CDJs read grids from Rekordbox's analysis,
+which the page says.
 
 ### Key
 

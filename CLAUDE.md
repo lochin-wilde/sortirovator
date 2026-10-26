@@ -44,10 +44,12 @@ gated, which is why the app stays behind invite codes and only the landing is pu
 
 **Pipeline** (`web/js/app.js`, `processFile`): decode on the main thread
 (`decodeAudioData` is unavailable in Safari workers) → up to 4 workers
-(`worker.js` running `dsp.js` + `loudness.js` + `keycnn.js`) for tempo/key/loudness/render →
+(`worker.js` running `dsp.js` + `loudness.js` + `keycnn.js` + `beatgrid.js`) for tempo/grid/key/loudness/render →
 genre via `resolveGenreFrom` → `tagOutput` writes ID3 → file into the ZIP →
 after the batch `writePlaylists` adds `Playlists/*.m3u8`. `identify.js`,
 `rekordbox.js` and `jszip` load lazily via `loadScriptOnce` when first needed.
+
+**Beat grid is written at download, not at processing.** `beatgrid.js` computes the grid with the tempo; `downloadZip` swaps in a Serato `BeatGrid` GEOB tag (tags.js `seratoGridTag`) only when the archive switch is on, then restores the entries. Only untouched-audio MP3s qualify (re-encoding moves beats), and an existing Serato grid is kept. Timeline offsets per MP3 header (LAME/Xing/none) are in `gridOffsetFor` (tags.js) — measured, see its comment. Rekordbox XML TEMPO export is not implemented: it needs absolute paths and must never touch tracks already in the collection.
 
 **Key = a network, chroma as fallback.** `keycnn.js` is a port of madmom's key CNN
 (weights `web/data/key_cnn.bin`, CC BY-NC-SA 4.0 — non-commercial, unlike the MIT

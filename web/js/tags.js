@@ -329,6 +329,69 @@ function id3TextFrame(id, text) {
 }
 
 /*
+ * Serato's beat grid, as the "Serato BeatGrid" GEOB frame Serato DJ reads from
+ * MP3 files.
+ *
+ * Layout, from the serato-tags project's documentation
+ * (docs/serato_beatgrid.md) and Mixxx's implementation
+ * (src/track/serato/beatgrid.cpp), all big-endian:
+ *
+ *   01 00                 version
+ *   u32                   number of markers
+ *   per marker            f32 position in seconds, then either f32 BPM (the
+ *                         last, "terminal" marker) or u32 beats to the next
+ *   u8                    footer; Serato's own files show varying values,
+ *                         Mixxx writes 0
+ *
+ * A constant grid is one terminal marker: where a beat falls, and the tempo.
+ * The GEOB wrapper is the one serato-tags writes with mutagen: Latin-1
+ * encoding, MIME "application/octet-stream", empty file name, the tag name as
+ * description. Serato documents MP3 and AIFF as carrying these frames; WAV is
+ * not documented, so nothing is written there.
+ */
+const SERATO_BEATGRID = "Serato BeatGrid";
+
+function seratoBeatGridData(positionSec, bpm) {
+  const data = new Uint8Array(15);
+  const view = new DataView(data.buffer);
+  data[0] = 0x01;
+  data[1] = 0x00;
+  view.setUint32(2, 1, false);
+  view.setFloat32(6, positionSec, false);
+  view.setFloat32(10, bpm, false);
+  data[14] = 0;
+  return data;
+}
+
+function id3GeobFrame(description, data) {
+  const latin1 = (text) => Array.from(text, (c) => c.charCodeAt(0) & 0xff);
+  const head = [0x00, ...latin1("application/octet-stream"), 0, 0, ...latin1(description), 0];
+  const size = head.length + data.length;
+  const frame = new Uint8Array(10 + size);
+  frame.set([0x47, 0x45, 0x4f, 0x42], 0); // "GEOB"
+  frame.set(synchsafeBytes(size), 4);
+  frame.set(head, 10);
+  frame.set(data, 10 + head.length);
+  return frame;
+}
+
+// The description of a GEOB frame built as above or carried from a file, or
+// null when the bytes are not a GEOB frame we can read.
+function geobDescription(frame) {
+  if (frame.length < 11 || String.fromCharCode(frame[0], frame[1], frame[2], frame[3]) !== "GEOB") return null;
+  const encoding = frame[10];
+  if (encoding !== 0 && encoding !== 3) return null; // Latin-1 or UTF-8 only
+  let at = 11;
+  while (at < frame.length && frame[at] !== 0) at++; // MIME
+  at++;
+  while (at < frame.length && frame[at] !== 0) at++; // file name
+  at++;
+  const start = at;
+  while (at < frame.length && frame[at] !== 0) at++;
+  return new TextDecoder(encoding === 3 ? "utf-8" : "latin1").decode(frame.subarray(start, at));
+}
+
+/*
  * Everything already in the tag that we are not replacing, re-emitted for the
  * new one.
  *
@@ -397,13 +460,14 @@ function framesToCarryOver(bytes, replacing) {
   return kept;
 }
 
-function buildId3v2(fields, carried) {
+function buildId3v2(fields, carried, extra) {
   const frames = [];
   for (const [id, key] of ID3_FRAMES) {
     const value = fields[key];
     if (value === null || value === undefined || value === "") continue;
     frames.push(id3TextFrame(id, value));
   }
+  if (extra) for (const frame of extra) frames.push(frame);
   if (frames.length === 0) return null;
   if (carried) for (const frame of carried) frames.push(frame);
 
@@ -427,6 +491,114 @@ function id3v2Length(bytes) {
   return 10 + synchsafeValue(bytes, 6) + footer;
 }
 
+/* Where an MP3's beats fall for other programs, and how to tell. */
+
+/*
+ * How an MP3 starts, which decides how DJ software lines its timeline up
+ * with ours: a LAME/Lavf "Info"/"Xing" header (gapless data), a bare Xing
+ * header, or none. `head` is the first few kilobytes of the file.
+ */
+function mp3HeaderKind(head) {
+  let start = 0;
+  if (head.length >= 10 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {
+    start = 10 + ((head[6] & 0x7f) << 21 | (head[7] & 0x7f) << 14 | (head[8] & 0x7f) << 7 | (head[9] & 0x7f));
+  }
+  const text = new TextDecoder("latin1").decode(head.subarray(start, Math.min(head.length, start + 4000)));
+  if (/Xing|Info/.test(text)) return /LAME|Lavf|Lavc/.test(text) ? "lame" : "xing";
+  return "none";
+}
+
+/*
+ * Seconds to add to a grid's firstBeat (beatgrid.js, decoded-audio timeline)
+ * for another program's timeline. `tagBytes` is the size of the file's ID3v2
+ * tag (id3v2Length).
+ *
+ *   rekordbox  measured on the train half of the owner's library, against
+ *              Rekordbox's own grids: no offset for WAV or for MP3s without a
+ *              LAME header -- the decoders agree. MP3s with one are placed
+ *              later by Rekordbox, which does not trim the encoder delay the
+ *              browser and ffmpeg trim: about 17 ms when the ID3 tag is under
+ *              16 KB, about 45 ms above it. Above 16 KB the per-file offsets
+ *              split between ~25 and ~52 ms and the file does not say which;
+ *              45 ms is the larger group. Rekordbox's analysis is not
+ *              something we can see into, so this is a measured habit, not a
+ *              rule.
+ *   serato     measured against the Serato grids already inside 699 of the
+ *              library's MP3s (train half; one-marker grids at the same
+ *              tempo, within 100 ms): Serato places beats about 47 ms later
+ *              than us on MP3s with a LAME header, 5 ms earlier on MP3s with
+ *              none, and about 16 ms later with a bare Xing header (only 13
+ *              files). Mixxx's published estimate for FFmpeg-decoded MP3s,
+ *              26 ms (src/track/serato/tags.cpp), did not fit these files.
+ *              Still to be confirmed by opening a file in Serato.
+ */
+function gridOffsetFor(program, kind, sampleRate, tagBytes = 0) {
+  if (kind === "wav") return 0;
+  if (program === "rekordbox") {
+    if (kind !== "lame") return 0;
+    return tagBytes < 16 * 1024 ? 0.017 : 0.045;
+  }
+  if (program === "serato") return { lame: 0.047, none: -0.005, xing: 0.016 }[kind] || 0;
+  return 0;
+}
+
+/*
+ * Sample rate from the first MPEG audio frame header after the ID3 tag, or
+ * null. Only MPEG-1 and MPEG-2 layer III rates are listed; that is what a DJ's
+ * MP3s are.
+ */
+function mp3SampleRate(head) {
+  let at = 0;
+  if (head.length >= 10 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) {
+    at = 10 + ((head[6] & 0x7f) << 21 | (head[7] & 0x7f) << 14 | (head[8] & 0x7f) << 7 | (head[9] & 0x7f));
+  }
+  for (; at + 4 <= head.length; at++) {
+    if (head[at] !== 0xff || (head[at + 1] & 0xe0) !== 0xe0) continue;
+    const version = (head[at + 1] >> 3) & 3; // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+    const index = (head[at + 2] >> 2) & 3;
+    const table = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] }[version];
+    if (table && index < 3) return table[index];
+  }
+  return null;
+}
+
+/*
+ * A replacement ID3v2 tag for an MP3 that adds a Serato beat grid and keeps
+ * everything else, given only the start of the file.
+ *
+ * The grid is offered as a switch on the finished archive, so it is added when
+ * the archive is packed rather than when the track is processed. Only the tag
+ * at the front changes, so the caller can splice the new tag onto the rest of
+ * the file without reading the audio: new Blob([tag, file.slice(replaces)]).
+ *
+ * `head` must hold at least the whole existing tag (see id3v2Length). Returns
+ * { tag, replaces } -- the new tag, and how many leading bytes it stands in
+ * for -- or null when the file already has a Serato grid or its tag is one we
+ * do not rewrite.
+ */
+function seratoGridTag(head, grid) {
+  const replaces = id3v2Length(head);
+  if (replaces > head.length) return null;
+  const hasTag = head.length >= 3 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33;
+  const carried = hasTag ? framesToCarryOver(head, new Set()) : [];
+  if (hasTag && carried.length === 0 && replaces > 10) {
+    // A tag we could not read frame by frame (v2.2, unsynchronised, flags):
+    // rewriting it would lose what is in it.
+    return null;
+  }
+  if (carried.some((frame) => geobDescription(frame) === SERATO_BEATGRID)) return null;
+  const extra = [id3GeobFrame(SERATO_BEATGRID, seratoBeatGridData(grid.position, grid.bpm))];
+  return { tag: buildId3v2({}, carried, extra), replaces };
+}
+
+// The descriptions of every GEOB frame in a file's ID3v2 tag -- how a caller
+// learns whether a Serato grid was already there.
+function id3GeobDescriptions(bytes) {
+  return framesToCarryOver(bytes, new Set())
+    .map(geobDescription)
+    .filter((d) => d !== null);
+}
+
 function writeMp3Tags(bytes, fields) {
   /*
    * Only the frames we are actually about to write count as replaced. Listing
@@ -437,7 +609,18 @@ function writeMp3Tags(bytes, fields) {
   const replacing = new Set(ID3_FRAMES
     .filter(([, key]) => fields[key] !== null && fields[key] !== undefined && fields[key] !== "")
     .map(([id]) => id));
-  const tag = buildId3v2(fields, framesToCarryOver(bytes, replacing));
+  const carried = framesToCarryOver(bytes, replacing);
+  /*
+   * A beat grid is added only when the file has none. One that is already
+   * there was made in Serato -- often adjusted by hand -- and is better than
+   * ours by definition.
+   */
+  const extra = [];
+  if (fields.seratoBeatGrid && !carried.some((frame) => geobDescription(frame) === SERATO_BEATGRID)) {
+    const { position, bpm } = fields.seratoBeatGrid;
+    extra.push(id3GeobFrame(SERATO_BEATGRID, seratoBeatGridData(position, bpm)));
+  }
+  const tag = buildId3v2(fields, carried, extra);
   if (!tag) return null;
   // The old tag is replaced rather than appended to: two ID3v2 headers in one
   // file is undefined behaviour, and readers disagree about which one wins.

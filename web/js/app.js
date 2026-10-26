@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.27.1";
+const APP_VERSION = "2026.10.27.3";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -113,6 +113,9 @@ const ui = {
   dropzone: el("dropzone"),
   runStatus: el("run-status"),
   archivePreview: el("archive-preview"),
+  gridExport: el("grid-export"),
+  gridSerato: el("grid-serato"),
+  gridSummary: el("grid-summary"),
   archiveSummary: el("archive-summary"),
   archiveTree: el("archive-tree"),
   tableHint: el("table-hint"),
@@ -536,7 +539,7 @@ function workerRequest(worker, message, transfers, expectedType) {
 
 // Worker stage ids mapped to translation keys.
 const STAGE_KEYS = {
-  bpm: "stage.bpm", key: "stage.key", loudness: "stage.loudness",
+  bpm: "stage.bpm", grid: "stage.grid", key: "stage.key", loudness: "stage.loudness",
   genre: "stage.genre", render: "stage.rendering",
 };
 
@@ -652,6 +655,9 @@ async function processFile(file, options, slot) {
     keyConfident: false,
     keySecond: null,
     keyMethod: null,
+    grid: null,
+    gridExport: null,
+    outputBlob: null,
     loudnessMode: null,
     measuredLufs: null,
     browseLufs: null,
@@ -809,6 +815,7 @@ async function processFile(file, options, slot) {
   result.keyConfident = analysis.keyConfident === true;
   result.keySecond = analysis.keySecond || null;
   result.keyMethod = analysis.keyMethod || null;
+  result.grid = analysis.grid || null;
 
   if (options.steps.sort) {
     ui.fileStage.textContent = t("stage.genre");
@@ -879,7 +886,12 @@ async function processFile(file, options, slot) {
 
   await workerRequest(worker, { type: "release" }, [], "released");
 
+  // Tags aside, is the output the source file's own audio? Only then do the
+  // grid's times still hold for it.
+  const audioIsOriginal = outputBlob === file;
   outputBlob = await tagOutput(result, outputExtension, outputBlob);
+  result.outputBlob = outputBlob;
+  result.gridExport = await gridExportFor(result, outputExtension, outputBlob, audioIsOriginal);
 
   const folder = options.steps.sort && result.genre
     ? genreFolderName(result.genre) + "/" : "";
@@ -996,6 +1008,11 @@ function describeResult(result) {
     bpmText = String(result.bpm);
   }
   lines.push(t("res.bpmKey", { bpm: bpmText, key: keyText }));
+  if (result.grid) {
+    lines.push(result.grid.place
+      ? t("res.grid", { bpm: result.grid.bpm.toFixed(2), first: result.grid.firstBeat.toFixed(3), confidence: result.grid.confidence.toFixed(2) })
+      : t("res.gridWithheld", { reason: t("grid.reason." + result.grid.reason), confidence: result.grid.confidence.toFixed(2) }));
+  }
 
   if (result.loudnessMode) {
     const label = t("loudness." + (result.loudnessMode === "short_term" ? "shortTerm"
@@ -1555,6 +1572,7 @@ function renderArchivePreview() {
   });
   ui.archiveTree.innerHTML = html;
   ui.archivePreview.hidden = false;
+  renderGridExport();
 }
 
 /*
@@ -1666,6 +1684,85 @@ async function tagOutput(result, extension, blob) {
     result.tagNote = "failed";
     return blob;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Beat grid export                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Whether this track's grid can go into the archive as a Serato tag, and why
+ * not when it cannot. Decided once per track, applied on download.
+ *
+ * Only an MP3 whose audio is the original is eligible. A rendered file was
+ * re-encoded -- the encoder's delay and a trimmed lead-in move every beat --
+ * and Serato's grid format for WAV is not documented. A file that already
+ * carries a Serato grid keeps it: that one was made in Serato, often by hand.
+ *
+ * `untouched` says the audio bytes are the source file's (tags aside).
+ */
+// Bytes read past the ID3 tag: enough for the first MPEG frame and its
+// Xing/LAME header.
+const GRID_HEAD_SLACK = 16 * 1024;
+
+// The start of a file up to the end of its ID3v2 tag plus GRID_HEAD_SLACK --
+// cover art can make the tag hundreds of kilobytes long.
+async function readHead(blob) {
+  const first = new Uint8Array(await blob.slice(0, 10).arrayBuffer());
+  return new Uint8Array(await blob.slice(0, id3v2Length(first) + GRID_HEAD_SLACK).arrayBuffer());
+}
+
+async function gridExportFor(result, extension, blob, untouched) {
+  if (!result.grid) return { ok: false, reason: "none" };
+  if (!result.grid.place) return { ok: false, reason: result.grid.reason };
+  if (String(extension).toLowerCase() !== ".mp3") return { ok: false, reason: "format" };
+  if (!untouched) return { ok: false, reason: "rendered" };
+  try {
+    const head = await readHead(blob);
+    if (id3GeobDescriptions(head).includes("Serato BeatGrid")) return { ok: false, reason: "existing" };
+    return { ok: true, reason: null, kind: mp3HeaderKind(head), sampleRate: mp3SampleRate(head) };
+  } catch (e) {
+    return { ok: false, reason: "format" };
+  }
+}
+
+/*
+ * Swap each eligible track's tag for one with a Serato grid while the archive
+ * is packed, then put the originals back, so the switch can be turned off and
+ * the archive downloaded again. Only the tag at the front is rebuilt; the rest
+ * of the file is the same Blob, sliced, so no audio is read or copied.
+ *
+ * Returns a function that undoes the swap.
+ */
+async function applySeratoGrids() {
+  const restore = [];
+  for (const result of resultRows) {
+    const exp = result.gridExport;
+    if (!exp || !exp.ok || !result.outputBlob || !result.outputPath) continue;
+    const blob = result.outputBlob;
+    const head = await readHead(blob);
+    const position = result.grid.firstBeat + gridOffsetFor("serato", exp.kind, exp.sampleRate);
+    const swap = seratoGridTag(head, { position, bpm: result.grid.bpm });
+    if (!swap) continue;
+    state.zip.file(result.outputPath, new Blob([swap.tag, blob.slice(swap.replaces)], { type: blob.type }));
+    restore.push([result.outputPath, blob]);
+  }
+  return () => { for (const [path, blob] of restore) state.zip.file(path, blob); };
+}
+
+function renderGridExport() {
+  if (!ui.gridExport) return;
+  const rows = resultRows.filter((r) => r.outputPath);
+  if (rows.length === 0) { ui.gridExport.hidden = true; return; }
+  const count = (reason) => rows.filter((r) => r.gridExport && (reason === null ? r.gridExport.ok : r.gridExport.reason === reason)).length;
+  // Only the reasons that apply to this batch; a list of zeros is noise.
+  const why = ["unsure", "dynamic", "rendered", "format", "existing", "none"]
+    .map((reason) => [reason, count(reason)])
+    .filter(([, n]) => n > 0)
+    .map(([reason, n]) => t("grid.why." + reason, { count: n }));
+  ui.gridSummary.textContent = t("grid.summary", { ready: count(null), total: rows.length })
+    + (why.length ? " " + t("grid.without", { list: why.join(", ") }) : "");
+  ui.gridExport.hidden = false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1809,9 +1906,15 @@ async function downloadZip() {
   const previousLabel = ui.download.textContent;
   ui.download.textContent = t("msg.packing");
   try {
-    const blob = await state.zip.generateAsync({ type: "blob", compression: "STORE" }, (meta) => {
-      ui.download.textContent = t("msg.packingPercent", { percent: Math.round(meta.percent) });
-    });
+    const restore = ui.gridSerato && ui.gridSerato.checked ? await applySeratoGrids() : () => {};
+    let blob;
+    try {
+      blob = await state.zip.generateAsync({ type: "blob", compression: "STORE" }, (meta) => {
+        ui.download.textContent = t("msg.packingPercent", { percent: Math.round(meta.percent) });
+      });
+    } finally {
+      restore();
+    }
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;

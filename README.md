@@ -23,6 +23,7 @@ closed testing.
 |---|---|
 | **Genre** | 6712 tags from three services, mapped onto 53 categories a DJ actually keeps apart — Afro House and Tech House never share a folder. A guess drawn from the artist rather than the track is marked `?` |
 | **Tempo** | against Rekordbox, 93.4% within ±1 BPM on 4459 tracks. A tempo that drifts is shown as `121~` rather than as one number that is not true |
+| **Beat grid** | tempo to 0.01 BPM and the first beat, fitted to the kick over the whole analysed stretch. Written only where it is confident — about half of tracks; on held-out tracks 90% of those match Rekordbox's grid within 70 ms, and the median distance to the Serato grids already in the files is 9 ms. Goes into MP3s as a Serato `BeatGrid` tag, off by default and switched on per archive; an existing Serato grid is never replaced |
 | **Key** | Camelot notation, by a convolutional network (Korzeniowski & Widmer, ISMIR 2018) running in the browser: 67.5% exact on the independent GiantSteps set against 57.8% for the previous method, and 66.3% exact, 85.3% within a mix on 4523 library tracks. An unsure answer is shown as `8A?` with the runner-up next to it |
 | **Loudness** | ITU-R BS.1770, integrated or short-term, true-peak aware, optional limiter, WAV or MP3 out. Without the limiter, gain stops before peaks pass −1 dBTP instead of clipping |
 | **Names** | strips what download sites add, turns transliterated Latin back into Cyrillic, reads artist and title from the file's tags before guessing from its name |
@@ -53,6 +54,7 @@ web/                  the app, served as static files
   js/identify.js      name parsing, transliteration, lookups, genre decision
   js/dsp.js           FFT, tempogram BPM, CQT chroma key (the fallback)
   js/keycnn.js        key network: madmom's spectrogram and CNN, ported
+  js/beatgrid.js      beat grid: kick envelope, comb fit, half-beat and confidence models
   js/loudness.js      BS.1770, true peak, limiter, resampler, WAV and MP3
   js/tags.js          reading and writing ID3v2, Vorbis and MP4 tags
   js/rekordbox.js     reading a Rekordbox collection export, writing genres back
@@ -116,6 +118,8 @@ python3 tools/groundtruth/match_tracks.py           # pairs them with files on d
 
 node tools/measure/measure_bpm.mjs                  # ~10 min
 node tools/measure/measure_key.mjs --detector cnn   # ~30 min; without the flag, the chroma fallback
+python3 tools/groundtruth/rekordbox_anlz.py --grids ground-truth/rekordbox_grids.json
+node tools/measure/measure_grid.mjs --half test     # ~20 min, beat grids against Rekordbox's
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 min, network-bound
 ```
 
