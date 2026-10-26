@@ -53,6 +53,33 @@ for (const f of readdirSync("tools/measure/key_variants").filter((f) => f.endsWi
   check("ля минор на -45 центов всё ещё 8A", dsp.detectKey(chord(-45, [45, 57, 60, 64, 69, 72]), sr).key === "8A");
 }
 
+/* ---------- hpss.mjs ---------- */
+
+{
+  const dsp = new Function(patchSource(source, variants["hpss.mjs"])
+    + "return { harmonicPart, detectKey };")();
+  // 20 frames x 24 bins: a steady note in bin 5, and in frame 10 a click in
+  // every bin.
+  const frames = Array.from({ length: 20 }, (_, t) =>
+    Float64Array.from({ length: 24 }, (_, b) => (b === 5 ? 1 : 0) + (t === 10 ? 1 : 0)));
+  const out = dsp.harmonicPart(frames, 9, 7);
+  check(`устойчивая нота остаётся (${out[3][5].toFixed(2)})`, out[3][5] > 0.95);
+  check(`щелчок по всем частотам убран (${out[10][15].toFixed(2)})`, out[10][15] < 0.05);
+  check(`нота в кадре со щелчком не потеряна (${out[10][5].toFixed(2)})`, out[10][5] > 0.3);
+  check("форма не меняется", out.length === 20 && out.every((r) => r.length === 24));
+  check("пустой вход -> пустой выход", dsp.harmonicPart([], 9, 7).length === 0);
+
+  const sr = 22050;
+  // A minor, with a broadband click every half second on top.
+  const y = new Float32Array(sr * 12);
+  for (const midi of [45, 57, 60, 64]) {
+    const f = 440 * Math.pow(2, (midi - 69) / 12);
+    for (let i = 0; i < y.length; i++) y[i] += 0.2 * Math.sin((2 * Math.PI * f * i) / sr);
+  }
+  for (let k = 0; k < y.length; k += sr / 2) for (let i = 0; i < 200 && k + i < y.length; i++) y[k + i] += (i % 2 ? 1 : -1) * (1 - i / 200);
+  check("ля минор со щелчками -> 8A", dsp.detectKey(y, sr).key === "8A");
+}
+
 /* ---------- report ---------- */
 
 const failed = results.filter((line) => line.includes("МИМО"));
