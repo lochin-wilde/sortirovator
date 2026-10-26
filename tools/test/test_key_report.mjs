@@ -8,7 +8,7 @@
 import {
   relation, halfOf, summarize, mcnemar, camelotFromKeyName, wheelStep, confusionMatrix, WHEEL,
 } from "../measure/key_report.mjs";
-import { patchSource } from "../measure/lib/measure.mjs";
+import { patchSource, keyWindow } from "../measure/lib/measure.mjs";
 
 const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
@@ -131,6 +131,27 @@ const base = Array.from({ length: 40 }, (_, i) => ({ name: "t" + i, truth: "8A",
   try { patchSource("x x", [["x", "y"]]); } catch { threw = true; }
   check("подмена с двумя совпадениями падает", threw);
   check("$ в замене не толкуется как шаблон", patchSource("a", [["a", "$&$&"]]) === "$&$&");
+}
+
+/* ---------- Analysis windows ---------- */
+
+{
+  const rate = 10; // samples per second, small enough to reason about
+  const track = Float32Array.from({ length: 300 * rate }, (_, i) => i); // 5 minutes, value = index
+  const first = keyWindow(track, rate, "first");
+  check("first: первые 120 с", first.length === 1200 && first[0] === 0);
+  const skip = keyWindow(track, rate, "skip60");
+  check("skip60: 120 с с 60-й секунды", skip.length === 1200 && skip[0] === 600);
+  const middle = keyWindow(track, rate, "middle");
+  check(`middle: 120 с по центру (с ${middle[0] / rate} с)`, middle.length === 1200 && middle[0] === 900);
+  check("whole: весь трек", keyWindow(track, rate, "whole").length === 3000);
+  const short = Float32Array.from({ length: 150 * rate }, (_, i) => i);
+  const tail = keyWindow(short, rate, "skip60");
+  check(`skip60 у трека в 150 с не вылезает за конец (с ${tail[0] / rate} с)`, tail.length === 1200 && tail[0] === 300);
+  check("трек короче окна берётся целиком", keyWindow(new Float32Array(50 * rate), rate, "middle").length === 500);
+  let threw = false;
+  try { keyWindow(track, rate, "end"); } catch { threw = true; }
+  check("неизвестное окно — ошибка", threw);
 }
 
 /* ---------- report ---------- */

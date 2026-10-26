@@ -26,6 +26,26 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = join(HERE, "../../..");
 // app.js:33 -- the browser analyses the first two minutes and no more.
 export const ANALYSIS_MAX_SECONDS = 120;
+
+/*
+ * Which stretch of a track the key is measured on. "first" is what the app
+ * does today; the others are candidates. A window that does not fit falls
+ * back to as much of the track as there is.
+ */
+export const KEY_WINDOWS = ["first", "skip60", "middle", "whole"];
+// Longest track decoded whole -- a DJ edit, not a recorded set.
+export const WHOLE_TRACK_MAX_SECONDS = 900;
+
+export function keyWindow(y, rate, window) {
+  const span = ANALYSIS_MAX_SECONDS * rate;
+  if (window === "whole") return y;
+  if (y.length <= span) return y;
+  let start = 0;
+  if (window === "skip60") start = Math.min(60 * rate, y.length - span);
+  if (window === "middle") start = Math.floor((y.length - span) / 2);
+  if (window !== "first" && window !== "skip60" && window !== "middle") throw new Error("unknown key window " + window);
+  return y.subarray(start, start + span);
+}
 // The library these labels come from. Only used to shorten paths in the report.
 const LIBRARY_ROOT = "/Volumes/HomeSSD/Lochin";
 
@@ -106,8 +126,8 @@ export function patchSource(code, patches) {
  * than in the browser -- worth remembering before chasing a single-track
  * disagreement between this harness and the running app.
  */
-export function decodeMono(file, rate) {
-  const args = ["-v", "quiet", "-i", file, "-t", String(ANALYSIS_MAX_SECONDS), "-ac", "1"];
+export function decodeMono(file, rate, maxSeconds = ANALYSIS_MAX_SECONDS) {
+  const args = ["-v", "quiet", "-i", file, "-t", String(maxSeconds), "-ac", "1"];
   if (rate) args.push("-ar", String(rate));
   args.push("-c:a", "pcm_f32le", "-f", "wav", "-");
   const buf = execFileSync("ffmpeg", args, { maxBuffer: 1024 * 1024 * 512 });

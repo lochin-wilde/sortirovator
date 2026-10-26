@@ -37,6 +37,10 @@
  *   node tools/measure/measure_key.mjs [--set rekordbox|giantsteps] [--limit N] [--jobs N] [--seed N] [--out FILE]
  *   node tools/measure/measure_key.mjs --rescore [--out FILE]
  *
+ * --window first|skip60|middle|whole picks the stretch of each track the key
+ * is measured on (see keyWindow in lib/measure.mjs); "first", the default, is
+ * what the app does. Each result records how long detectKey took, in ms.
+ *
  * --patch FILE.mjs measures a variant: the module's default export is a list
  * of [find, replace] pairs applied to dsp.js before it is loaded (see
  * patchSource). The shipped file is not touched. Compare the result with
@@ -48,7 +52,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import {
-  ROOT, loadDsp, patchSource, loadKeyLabels, decodeMono, arg, pickSample, runPool,
+  ROOT, loadDsp, patchSource, loadKeyLabels, decodeMono, keyWindow, KEY_WINDOWS, WHOLE_TRACK_MAX_SECONDS, arg, pickSample, runPool,
   printCounts, printByFolder, writeResults, rescore,
 } from "./lib/measure.mjs";
 
@@ -88,14 +92,20 @@ if (!isMainThread) {
       dsp = loadDsp(["detectKey"], "", patches);
     }
     try {
-      const { y } = decodeMono(task.file, KEY_RATE);
+      const window = arg("--window", "first");
+      const decoded = decodeMono(task.file, KEY_RATE, window === "first" ? undefined : WHOLE_TRACK_MAX_SECONDS).y;
+      const y = keyWindow(decoded, KEY_RATE, window);
       if (y.length < KEY_RATE) throw new Error("too short");
+      const started = performance.now();
       const key = dsp.detectKey(y, KEY_RATE);
+      const ms = Math.round(performance.now() - started);
       parentPort.postMessage({
         name: task.name,
         ours: key ? key.key : null,
         confidence: key && key.confidence !== null ? Math.round(key.confidence * 1000) / 1000 : null,
         confident: key ? !!key.confident : false,
+        ms,
+        seconds: Math.round(y.length / KEY_RATE),
       });
     } catch (e) {
       parentPort.postMessage({ name: task.name, ours: null, error: String(e.message || e) });
@@ -112,6 +122,7 @@ async function main() {
     console.log("variant: %s (%d patches)", patchFile, patches.length);
   }
   const set = arg("--set", "rekordbox");
+  if (!KEY_WINDOWS.includes(arg("--window", "first"))) throw new Error("unknown --window " + arg("--window", ""));
   const outPath = arg("--out", join(ROOT, set === "rekordbox" ? "ground-truth/key_results.json" : `ground-truth/key_results_${set}.json`));
 
   let results;
