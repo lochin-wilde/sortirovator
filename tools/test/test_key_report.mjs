@@ -8,6 +8,7 @@
 import {
   relation, halfOf, summarize, mcnemar, camelotFromKeyName, wheelStep, confusionMatrix, WHEEL,
 } from "../measure/key_report.mjs";
+import { patchSource } from "../measure/lib/measure.mjs";
 
 const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
@@ -116,6 +117,20 @@ const base = Array.from({ length: 40 }, (_, i) => ({ name: "t" + i, truth: "8A",
 {
   const t = mcnemar(base, base.slice(0, 10));
   check("сравниваются только общие треки", t.n === 10);
+}
+
+/* ---------- Variants of the detector ---------- */
+
+{
+  const src = "const A = 1;\nconst B = 2;\n";
+  check("подмена применяется", patchSource(src, [["const A = 1;", "const A = 5;"]]).includes("const A = 5;"));
+  let threw = false;
+  try { patchSource(src, [["const C = 3;", "x"]]); } catch { threw = true; }
+  check("подмена, которая ничего не нашла, падает, а не мерит исходный код", threw);
+  threw = false;
+  try { patchSource("x x", [["x", "y"]]); } catch { threw = true; }
+  check("подмена с двумя совпадениями падает", threw);
+  check("$ в замене не толкуется как шаблон", patchSource("a", [["a", "$&$&"]]) === "$&$&");
 }
 
 /* ---------- report ---------- */

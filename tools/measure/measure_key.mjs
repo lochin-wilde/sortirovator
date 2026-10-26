@@ -36,14 +36,19 @@
  * -----
  *   node tools/measure/measure_key.mjs [--set rekordbox|giantsteps] [--limit N] [--jobs N] [--seed N] [--out FILE]
  *   node tools/measure/measure_key.mjs --rescore [--out FILE]
+ *
+ * --patch FILE.mjs measures a variant: the module's default export is a list
+ * of [find, replace] pairs applied to dsp.js before it is loaded (see
+ * patchSource). The shipped file is not touched. Compare the result with
+ * key_report.mjs --compare.
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
 import {
-  ROOT, loadDsp, decodeMono, arg, pickSample, runPool,
+  ROOT, loadDsp, patchSource, decodeMono, arg, pickSample, runPool,
   printCounts, printByFolder, writeResults, rescore,
 } from "./lib/measure.mjs";
 import { camelotFromKeyName } from "./key_report.mjs";
@@ -75,9 +80,14 @@ function classify(ours, truth) {
 }
 
 if (!isMainThread) {
-  const dsp = loadDsp(["detectKey"]);
-  parentPort.on("message", (task) => {
+  let dsp = null;
+  parentPort.on("message", async (task) => {
     if (task === null) process.exit(0);
+    if (!dsp) {
+      const patchFile = arg("--patch", null);
+      const patches = patchFile ? (await import(pathToFileURL(resolve(patchFile)).href)).default : [];
+      dsp = loadDsp(["detectKey"], "", patches);
+    }
     try {
       const { y } = decodeMono(task.file, KEY_RATE);
       if (y.length < KEY_RATE) throw new Error("too short");
@@ -116,6 +126,13 @@ function loadLabels(set) {
 }
 
 async function main() {
+  const patchFile = arg("--patch", null);
+  if (patchFile) {
+    // Fail here, once, rather than in every worker.
+    const patches = (await import(pathToFileURL(resolve(patchFile)).href)).default;
+    patchSource(readFileSync(join(ROOT, "web/js/dsp.js"), "utf8"), patches);
+    console.log("variant: %s (%d patches)", patchFile, patches.length);
+  }
   const set = arg("--set", "rekordbox");
   if (!["rekordbox", "giantsteps"].includes(set)) throw new Error("unknown --set " + set);
   const outPath = arg("--out", join(ROOT, set === "rekordbox" ? "ground-truth/key_results.json" : `ground-truth/key_results_${set}.json`));

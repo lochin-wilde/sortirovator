@@ -38,10 +38,25 @@ const LIBRARY_ROOT = "/Volumes/HomeSSD/Lochin";
  * a hook into private state, and it breaks loudly rather than silently only
  * because the caller checks what came back.
  */
-export function loadDsp(names, extra = "") {
-  const code = readFileSync(join(ROOT, "web/js/dsp.js"), "utf8");
+export function loadDsp(names, extra = "", patches = []) {
+  const code = patchSource(readFileSync(join(ROOT, "web/js/dsp.js"), "utf8"), patches);
   // eslint-disable-next-line no-new-func
   return new Function(code + "\n" + extra + `\nreturn { ${names.join(", ")} };`)();
+}
+
+/*
+ * Apply [find, replace] pairs to a source text -- how an idea is tried on the
+ * detector before anyone edits dsp.js. Each `find` must occur exactly once:
+ * a patch that silently matched nothing would measure the unchanged detector
+ * and report it as the idea.
+ */
+export function patchSource(code, patches) {
+  for (const [find, replace] of patches) {
+    const count = code.split(find).length - 1;
+    if (count !== 1) throw new Error(`patch target found ${count} times, expected once: ${find.slice(0, 60)}`);
+    code = code.replace(find, () => replace);
+  }
+  return code;
 }
 
 /*
@@ -133,7 +148,9 @@ export function runPool(workerUrl, tasks, onResult) {
   return new Promise((resolve, reject) => {
     let live = 0;
     for (let i = 0; i < Math.min(jobs, total); i++) {
-      const w = new Worker(workerUrl);
+      // Workers do not inherit the command line; options such as --patch
+      // have to be handed over or the workers silently ignore them.
+      const w = new Worker(workerUrl, { argv: process.argv.slice(2) });
       live++;
       const next = () => {
         const task = queue.shift();
