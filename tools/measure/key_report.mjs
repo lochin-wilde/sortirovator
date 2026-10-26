@@ -35,7 +35,8 @@
  * -----
  *   node tools/measure/key_report.mjs [RESULTS.json] [--half train|test] [--top N] [--matrix]
  *   node tools/measure/key_report.mjs --compare BEFORE.json AFTER.json [--half test]
- *   (default results file: ground-truth/key_results.json)
+ *   (default results file: ground-truth/key_results.json; several files may
+ *   be given joined with commas, e.g. a run's train and test halves)
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -276,10 +277,14 @@ function erfc(x) {
 /* Command line                                                        */
 /* ------------------------------------------------------------------ */
 
-function load(path) {
-  if (!existsSync(path)) throw new Error("no results file at " + path);
-  const data = JSON.parse(readFileSync(path, "utf8"));
-  const rows = data.results || data;
+// One results file, or several joined with commas (e.g. the two halves).
+function load(paths) {
+  const rows = [];
+  for (const path of String(paths).split(",")) {
+    if (!existsSync(path)) throw new Error("no results file at " + path);
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    rows.push(...(data.results || data));
+  }
   // measure_key.mjs keys results by file path in `name`.
   return rows.map((r) => ({ name: r.name || r.file, ours: r.ours, truth: r.truth, confident: r.confident }));
 }

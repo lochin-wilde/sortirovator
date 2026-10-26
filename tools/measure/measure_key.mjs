@@ -41,6 +41,10 @@
  * is measured on (see keyWindow in lib/measure.mjs); "first", the default, is
  * what the app does. Each result records how long detectKey took, in ms.
  *
+ * --half train|test measures only that held-out half (halfOf in
+ * key_report.mjs), so a run fits in half the time; key_report.mjs reads
+ * several result files joined with commas.
+ *
  * --patch FILE.mjs measures a variant: the module's default export is a list
  * of [find, replace] pairs applied to dsp.js before it is loaded (see
  * patchSource). The shipped file is not touched. Compare the result with
@@ -55,6 +59,7 @@ import {
   ROOT, loadDsp, patchSource, loadKeyLabels, decodeMono, keyWindow, KEY_WINDOWS, WHOLE_TRACK_MAX_SECONDS, arg, pickSample, runPool,
   printCounts, printByFolder, writeResults, rescore,
 } from "./lib/measure.mjs";
+import { halfOf } from "./key_report.mjs";
 
 // worker.js:25 -- the key runs on the 22.05 kHz mono, librosa's default rate,
 // which is what the CQT kernels in dsp.js were built for.
@@ -130,9 +135,12 @@ async function main() {
     results = rescore(outPath, classify);
   } else {
     const labels = loadKeyLabels(set);
+    const half = arg("--half", null);
+    if (half && !["train", "test"].includes(half)) throw new Error("unknown --half " + half);
+    const names = Object.keys(labels).filter((p) => !half || halfOf(p) === half);
     results = [];
     await runPool(fileURLToPath(import.meta.url),
-      pickSample(Object.keys(labels)).map((p) => ({ name: p, file: p })),
+      pickSample(names).map((p) => ({ name: p, file: p })),
       (r) => {
         const truth = labels[r.name];
         results.push({ ...r, truth, verdict: classify(r.ours, truth), file: r.name });
@@ -163,6 +171,15 @@ async function main() {
   ]);
 
   writeResults(outPath, { counts, results });
+
+  // A drive that drops out mid-run turns the rest of the run into "no key"
+  // answers. That is not a result, so say so loudly and fail.
+  const unreadable = results.filter((r) => r.error).length;
+  if (unreadable) console.log("\n  %d tracks could not be read or analysed", unreadable);
+  if (unreadable > Math.max(5, n * 0.01)) {
+    console.log("  more than 1%% failed -- is the music drive connected? Not a measurement.");
+    process.exitCode = 2;
+  }
 }
 
 if (isMainThread) main();
