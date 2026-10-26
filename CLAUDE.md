@@ -44,10 +44,18 @@ gated, which is why the app stays behind invite codes and only the landing is pu
 
 **Pipeline** (`web/js/app.js`, `processFile`): decode on the main thread
 (`decodeAudioData` is unavailable in Safari workers) → up to 4 workers
-(`worker.js` running `dsp.js` + `loudness.js`) for tempo/key/loudness/render →
+(`worker.js` running `dsp.js` + `loudness.js` + `keycnn.js`) for tempo/key/loudness/render →
 genre via `resolveGenreFrom` → `tagOutput` writes ID3 → file into the ZIP →
 after the batch `writePlaylists` adds `Playlists/*.m3u8`. `identify.js`,
 `rekordbox.js` and `jszip` load lazily via `loadScriptOnce` when first needed.
+
+**Key = a network, chroma as fallback.** `keycnn.js` is a port of madmom's key CNN
+(weights `web/data/key_cnn.bin`, CC BY-NC-SA 4.0 — non-commercial, unlike the MIT
+rest; see `KEY_CNN_LICENSE.txt`). It needs 44.1 kHz mono, so `processFile` sends a
+resampled copy when the decode rate differs. The worker fetches the weights once and
+falls back to `detectKey` in `dsp.js` if that fails. Any change to the key path is
+judged with `tools/measure/measure_key.mjs` on both `--set giantsteps` and the
+library's held-out half (`key_report.mjs --compare … --half test`), never on one.
 
 **Plain scripts, not modules.** Every `web/js/*.js` file is a classic script sharing
 globals. Tests reach inside them by evaluating the file with `new Function(src +

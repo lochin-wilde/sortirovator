@@ -25,13 +25,15 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.25.3";
+const APP_VERSION = "2026.10.27.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
-// Mirrors KEY_MIN_CONFIDENCE in dsp.js, which runs in the worker.
-const KEY_CONFIDENCE_THRESHOLD = 0.50;
+// Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
+// network, KEY_MIN_CONFIDENCE in dsp.js for the chroma fallback.
+const KEY_CONFIDENCE_THRESHOLD = { cnn: 0.5, chroma: 0.5 };
 const ANALYSIS_MAX_SECONDS = 120;
 const GENRE_ANALYSIS_RATE = 22050;
+const KEY_CNN_ANALYSIS_RATE = 44100; // KEY_CNN_RATE in keycnn.js
 
 /*
  * Largest file accepted, per file.
@@ -648,6 +650,8 @@ async function processFile(file, options, slot) {
     key: null,
     keyConfidence: null,
     keyConfident: false,
+    keySecond: null,
+    keyMethod: null,
     loudnessMode: null,
     measuredLufs: null,
     browseLufs: null,
@@ -763,6 +767,10 @@ async function processFile(file, options, slot) {
     const nativeRate = audioBuffer.sampleRate;
     const monoNative = downmixToMono(audioBuffer, ANALYSIS_MAX_SECONDS);
     const mono22k = await resampleMono(monoNative, nativeRate, GENRE_ANALYSIS_RATE);
+    // The key network (keycnn.js) was trained on 44.1 kHz. A 44.1 kHz file
+    // needs no copy -- the worker reads monoNative -- so only resample others.
+    const mono44k = options.steps.bpmKey && nativeRate !== KEY_CNN_ANALYSIS_RATE
+      ? await resampleMono(monoNative, nativeRate, KEY_CNN_ANALYSIS_RATE) : null;
 
     let channels = null;
     if (options.steps.loudness) {
@@ -780,8 +788,10 @@ async function processFile(file, options, slot) {
       sampleRate: nativeRate,
       monoNative: monoNative.buffer,
       mono22k: mono22k.buffer,
+      mono44k: mono44k ? mono44k.buffer : null,
       channels: null,
     };
+    if (mono44k) transfers.push(mono44k.buffer);
     if (channels) {
       message.channels = channels.map((c) => c.buffer);
       for (const c of channels) transfers.push(c.buffer);
@@ -797,6 +807,8 @@ async function processFile(file, options, slot) {
   result.bpmMax = analysis.bpmMax !== undefined ? analysis.bpmMax : null;
   result.keyConfidence = analysis.keyConfidence !== undefined ? analysis.keyConfidence : null;
   result.keyConfident = analysis.keyConfident === true;
+  result.keySecond = analysis.keySecond || null;
+  result.keyMethod = analysis.keyMethod || null;
 
   if (options.steps.sort) {
     ui.fileStage.textContent = t("stage.genre");
@@ -959,14 +971,17 @@ function describeResult(result) {
 
   // A weak key is still shown, clearly marked, rather than discarded.
   let keyText;
+  const keyKind = result.keyMethod === "cnn" ? "Cnn" : "";
   if (result.key && result.keyConfident) {
-    keyText = t("res.keyConfident", { key: result.key, score: result.keyConfidence.toFixed(2) });
+    keyText = t("res.keyConfident" + keyKind, { key: result.key, score: result.keyConfidence.toFixed(2) });
   } else if (result.key) {
-    keyText = t("res.keyGuess", {
+    keyText = t("res.keyGuess" + keyKind, {
       key: result.key,
       score: result.keyConfidence.toFixed(2),
-      threshold: KEY_CONFIDENCE_THRESHOLD.toFixed(2),
+      threshold: KEY_CONFIDENCE_THRESHOLD[result.keyMethod === "cnn" ? "cnn" : "chroma"].toFixed(2),
     });
+    // A guess comes with the runner-up, which is often the right answer.
+    if (result.keySecond) keyText += " " + t("res.keySecond", { key: result.keySecond });
   } else {
     keyText = t("res.keyNotDetected");
   }

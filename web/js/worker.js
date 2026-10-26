@@ -16,7 +16,7 @@
 // The worker's own URL carries ?v=…; pass it on so its imports are not served
 // from cache after the worker itself has been refreshed.
 const WORKER_VERSION = new URLSearchParams(self.location.search).get("v") || "dev";
-importScripts("dsp.js?v=" + WORKER_VERSION, "loudness.js?v=" + WORKER_VERSION);
+importScripts("dsp.js?v=" + WORKER_VERSION, "loudness.js?v=" + WORKER_VERSION, "keycnn.js?v=" + WORKER_VERSION);
 
 // The Python version analyses the whole file. Capping analysis keeps a batch
 // usable in a browser; BPM and key are both stable well inside this window.
@@ -24,6 +24,28 @@ const ANALYSIS_MAX_SECONDS = 120;
 const GENRE_ANALYSIS_RATE = 22050; // librosa.load default sample rate
 
 let session = null;
+
+/*
+ * The key network's weights (keycnn.js), fetched once per worker on the first
+ * track that needs a key. `false` once loading has failed: the chroma
+ * detector in dsp.js then answers instead, so a missing or blocked model file
+ * costs accuracy, never the batch.
+ */
+let keyModel = null;
+let keyModelLoading = null;
+
+function loadKeyModel() {
+  if (!keyModelLoading) {
+    keyModelLoading = fetch("../data/key_cnn.bin?v=" + WORKER_VERSION, { credentials: "same-origin" })
+      .then((response) => {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.arrayBuffer();
+      })
+      .then((buffer) => { keyModel = parseKeyCnnModel(buffer); })
+      .catch(() => { keyModel = false; });
+  }
+  return keyModelLoading;
+}
 
 function report(stage, value) {
   self.postMessage({ type: "progress", stage, value });
@@ -34,7 +56,9 @@ self.onmessage = (event) => {
   try {
     switch (msg.type) {
       case "analyze":
-        handleAnalyze(msg);
+        handleAnalyze(msg).catch((error) => {
+          self.postMessage({ type: "error", message: String((error && error.message) || error) });
+        });
         break;
       case "render":
         handleRender(msg);
@@ -51,7 +75,7 @@ self.onmessage = (event) => {
   }
 };
 
-function handleAnalyze(msg) {
+async function handleAnalyze(msg) {
   session = {
     mono22k: msg.mono22k ? new Float32Array(msg.mono22k) : null,
     monoNative: msg.monoNative ? new Float32Array(msg.monoNative) : null,
@@ -68,6 +92,8 @@ function handleAnalyze(msg) {
     key: null,
     keyConfidence: null,
     keyConfident: false,
+    keySecond: null,
+    keyMethod: null,
     integratedLufs: null,
     shortTermMaxLufs: null,
     truePeakDb: null,
@@ -81,10 +107,26 @@ function handleAnalyze(msg) {
     result.bpmMin = tempo.min;
     result.bpmMax = tempo.max;
     report("key", 0);
-    const key = detectKey(session.mono22k, GENRE_ANALYSIS_RATE, (p) => report("key", p));
-    result.key = key.key;
-    result.keyConfidence = key.confidence;
-    result.keyConfident = key.confident;
+    // The network wants 44.1 kHz; the main thread sends a resampled copy
+    // only when the file is at another rate.
+    const mono44k = msg.mono44k ? new Float32Array(msg.mono44k)
+      : (session.sampleRate === KEY_CNN_RATE ? session.monoNative : null);
+    await loadKeyModel();
+    if (keyModel && mono44k) {
+      const key = detectKeyCnn(mono44k, keyModel);
+      result.key = key.key;
+      result.keyConfidence = key.confidence;
+      result.keyConfident = key.confident;
+      result.keySecond = key.second;
+      result.keyMethod = "cnn";
+    } else {
+      const key = detectKey(session.mono22k, GENRE_ANALYSIS_RATE, (p) => report("key", p));
+      result.key = key.key;
+      result.keyConfidence = key.confidence;
+      result.keyConfident = key.confident;
+      result.keyMethod = "chroma";
+    }
+    report("key", 1);
   }
 
   /*

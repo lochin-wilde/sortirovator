@@ -23,7 +23,7 @@ closed testing.
 |---|---|
 | **Genre** | 6712 tags from three services, mapped onto 53 categories a DJ actually keeps apart — Afro House and Tech House never share a folder. A guess drawn from the artist rather than the track is marked `?` |
 | **Tempo** | against Rekordbox, 93.4% within ±1 BPM on 4459 tracks. A tempo that drifts is shown as `121~` rather than as one number that is not true |
-| **Key** | Camelot notation, 65.0% exact and 80.8% within a mix on 4523 tracks. An unsure answer is shown as `8A?` |
+| **Key** | Camelot notation, by a convolutional network (Korzeniowski & Widmer, ISMIR 2018) running in the browser: 67.5% exact on the independent GiantSteps set against 57.8% for the previous method, and 66.3% exact, 85.3% within a mix on 4523 library tracks. An unsure answer is shown as `8A?` with the runner-up next to it |
 | **Loudness** | ITU-R BS.1770, integrated or short-term, true-peak aware, optional limiter, WAV or MP3 out. Without the limiter, gain stops before peaks pass −1 dBTP instead of clipping |
 | **Names** | strips what download sites add, turns transliterated Latin back into Cyrillic, reads artist and title from the file's tags before guessing from its name |
 | **Tags** | genre, tempo and key are written back into MP3 and WAV output as ID3v2.4, carrying across the frames the file already had — cover art, Serato beat grids and the rest |
@@ -51,7 +51,8 @@ web/                  the app, served as static files
   css/styles.css      design tokens and styles; every page follows them
   js/app.js           batch pipeline, results table, ZIP, playlists, tag writing
   js/identify.js      name parsing, transliteration, lookups, genre decision
-  js/dsp.js           FFT, tempogram BPM, CQT chroma key
+  js/dsp.js           FFT, tempogram BPM, CQT chroma key (the fallback)
+  js/keycnn.js        key network: madmom's spectrogram and CNN, ported
   js/loudness.js      BS.1770, true peak, limiter, resampler, WAV and MP3
   js/tags.js          reading and writing ID3v2, Vorbis and MP4 tags
   js/rekordbox.js     reading a Rekordbox collection export, writing genres back
@@ -60,6 +61,7 @@ web/                  the app, served as static files
   js/admin.js         the admin panel
   js/i18n.js          Russian and English strings
   data/genres_map.json   generated — see below
+  data/key_cnn.bin    the key network's weights, CC BY-NC-SA 4.0 (see below)
   og.png              link preview card — generated
   _headers            CSP and caching
 functions/            Cloudflare Pages Functions
@@ -113,12 +115,20 @@ python3 tools/groundtruth/rekordbox_anlz.py         # beat grids from the analys
 python3 tools/groundtruth/match_tracks.py           # pairs them with files on disk
 
 node tools/measure/measure_bpm.mjs                  # ~10 min
-node tools/measure/measure_key.mjs                  # ~10 min
+node tools/measure/measure_key.mjs --detector cnn   # ~30 min; without the flag, the chroma fallback
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 min, network-bound
 ```
 
 The database is read from a copy, never opened in place. The results land in
 `ground-truth/`, which is not committed: it describes a private library.
+
+Rekordbox's keys are its own detector's answers, not ears, so key is also
+measured on an outside set: GiantSteps-key, 604 Beatport previews whose keys
+listeners corrected. Clone `GiantSteps/giantsteps-key-dataset` into
+`ground-truth/giantsteps/key-dataset`, put the previews (its `audio_dl.sh`
+lists where) in `ground-truth/giantsteps/audio`, and add `--set giantsteps`.
+`tools/measure/key_report.mjs --compare BEFORE AFTER` scores two runs against
+each other with McNemar's test; `--half test` keeps the held-out half.
 
 Read the numbers per folder, not only in total. The average moves with what
 the library contains — about two thousand added tracks, mostly house and liquid drum & bass, lifted key accuracy
@@ -147,4 +157,8 @@ by rule so that the categories follow a DJ's shelves instead.
 
 ## Licence
 
-MIT.
+MIT, except the key network's weights: `web/data/key_cnn.bin` is converted
+from madmom_models (Korzeniowski & Widmer, Johannes Kepler University Linz) and
+is licensed CC BY-NC-SA 4.0 — non-commercial use only. Details and attribution
+in `web/data/KEY_CNN_LICENSE.txt`.
+

@@ -118,7 +118,8 @@ is a record of what happened rather than live interface text.
 | `landing.html` | Public front page. Self-contained on purpose: the gate answers every other path with the login page, so it can link nothing |
 | `admin.html` | Review of genre corrections, admin role only |
 | `css/styles.css` | Design tokens and styling, dark and light. The landing and login page copy the same tokens inline; `tools/test/test_style.mjs` fails if they drift |
-| `js/dsp.js` | FFT, onset/tempogram BPM, CQT chroma key |
+| `js/dsp.js` | FFT, onset/tempogram BPM, CQT chroma key (the fallback) |
+| `js/keycnn.js` | Key network: madmom's spectrogram and Korzeniowski & Widmer's CNN, ported for inference; weights in `data/key_cnn.bin` (CC BY-NC-SA 4.0) |
 | `js/loudness.js` | ITU-R BS.1770 loudness, true peak, limiter, silence trim, resampler, WAV/MP3 encoders |
 | `js/tags.js` | Reads ID3v2, Vorbis comments and MP4 ilst; writes ID3v2.4 into MP3 and WAV |
 | `js/rekordbox.js` | Reads a Rekordbox collection export and writes an XML to import back, holding only the tracks whose genre changed |
@@ -164,7 +165,7 @@ top-level README has the commands.
 | | Tracks | Result |
 |---|---|---|
 | **Tempo** | 4459 | **93.4%** within ±1 BPM; a further 3.5% are a clean multiple — double, half, 4/3 — that a DJ reads through |
-| **Key** | 4523 | **65.0%** exact, **80.8%** exact or one step round the Camelot wheel |
+| **Key** | 4523 | **66.3%** exact, **85.3%** exact, relative or one step round the Camelot wheel — the network in `js/keycnn.js`. On GiantSteps-key, 604 tracks keyed by listeners: **67.5%** exact |
 | **Genre** | 375, 25 per folder | **20.5%** exact, 11.2% a related genre, 31.2% an honest blank |
 
 **Read these per folder, not only in total.** The averages move with what the
@@ -188,12 +189,11 @@ one configuration scored 50/50 on generated tones and then 33% on real tracks.
 
 ### Where key detection is weak
 
-Major/minor discrimination barely works. Across all four Rekordbox sets only 33
-of 428 tracks are in a major key, and the detector identifies few of them. The minor bias
-improves the overall score largely by exploiting that base rate rather than by
-telling the modes apart — see `KEY_MINOR_BIAS` in `dsp.js`, which documents the
-trade-off and the operating point chosen. On a library that is not
-overwhelmingly minor, set it to 1.0.
+Major keys. The chroma detector found 15% of them — its minor bias scores by
+the base rate, since dance music is about nine-tenths minor. The network finds
+about 40% (40.7% of 442 library majors, 39.8% of 93 on GiantSteps), at the
+cost of calling some minor tracks major: library minor exact fell from 70.4%
+to 69.1%. Major keys are still where most of the remaining gap is.
 
 ### BPM
 
@@ -246,6 +246,48 @@ continuous DJ mix.
 
 ### Key
 
+**The key comes from a convolutional network** — Korzeniowski & Widmer,
+"Genre-Agnostic Key Classification with Convolutional Neural Networks" (ISMIR
+2018), trained by its authors and shipped in madmom. `js/keycnn.js` ports the
+inference: madmom's log-filtered spectrogram (8192-sample frames, 5 per
+second, 24 triangular bands per octave from 65 to 2100 Hz, log10(1 + x)), then
+nine convolutions with batch norm and ELU, a mean over time and frequency, and
+softmax over 24 keys. On madmom's own test files the port matches its stored
+outputs to 3e-7. The weights, `data/key_cnn.bin`, are CC BY-NC-SA 4.0
+(`data/KEY_CNN_LICENSE.txt`); `tools/build/convert_key_cnn.py` makes them from
+the authors' pickle without executing it.
+
+Measured against the chroma detector below, McNemar on exact matches:
+
+| | Chroma | Network | Fixed / broken |
+|---|---|---|---|
+| GiantSteps-key, 604 (not in the network's training data) | 57.8% | **67.5%** | 99 / 40, p = 9e-7 |
+| Library held-out half, 2327 (Rekordbox's labels) | 64.1% | 64.8% | 309 / 291, p = 0.49 |
+| Library held-out half, compatible | 79.8% | **84.5%** | 252 / 143, p = 6e-8 |
+
+The library half was the guard, not the target: its labels are Rekordbox's
+own detector, so a better detector need not agree with it more often. It had to
+not get worse, and it did not.
+
+It costs time: about 3.5 s a track in a browser against 0.3 s for the chroma,
+which is why it runs in the worker beside everything else. Its top probability
+gates the `?` at 0.5, chosen on the library's train half: there 78% of
+confident answers were exact against 41% of the rest. A guess is shown with
+the runner-up key, which on GiantSteps is the right one for 37% of the
+network's mistakes.
+
+If the weights cannot be loaded, the worker falls back to the chroma detector,
+so a missing file costs accuracy, never the batch.
+
+**What did not help the chroma detector**, each measured on the held-out half
+and GiantSteps before the network was tried, and kept under
+`tools/measure/key_variants/` and `tools/measure/try_key_*.mjs`: Essentia's EDM
+profiles (edma, bgate, braw) and the classic ones (all significantly worse),
+tuning correction, segment voting, other analysis windows, HPSS, folding in the
+bass octave, dropping the top octave. None was significantly better on both.
+
+#### The chroma detector (fallback)
+
 Constant-Q chroma spanning C1–B6, high-passed at C3 before the transform, with
 only the semitones from C3 up folded into the chroma.
 
@@ -273,7 +315,7 @@ the real library it reached only 83/165 even with its own profile tuned on the
 same data. It was kept out. The implementation may simply be under-tuned; what
 is certain is that on this material it lost.
 
-### Confidence
+#### The chroma detector's confidence
 
 The gate is 0.50. Correct answers average 0.687 and wrong ones 0.492, so the
 score carries real information, but the distributions overlap and no threshold
