@@ -17,6 +17,12 @@
  * 9 frames is 1.7 s; hpss_long.mjs tries 17 (3.2 s).
  *
  *   node tools/measure/measure_key.mjs --patch tools/measure/key_variants/hpss.mjs
+ *
+ * Result, 2026-10-26: not adopted. Exact matches, fixed/broken against the
+ * shipped detector: library train half 78/63 (p = 0.24), held-out half
+ * 72/67 (p = 0.73), GiantSteps 19/13 (p = 0.38). A small lean the right way
+ * on every set, significant on none; major keys got slightly worse on the
+ * library (15.8% -> 12.1% held-out) and better on GiantSteps (12.9% -> 16.1%).
  */
 
 export function hpssPatches({ timeKernel = 9, freqKernel = 7 } = {}) {
