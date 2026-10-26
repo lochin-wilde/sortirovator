@@ -35,9 +35,16 @@ so the tree is walked by hopping section to section. All integers big-endian.
 Tempo can change across a track, so the per-beat values are collapsed to the one
 that holds for the longest -- for a DJ library that is the tempo of the track.
 
+Beat grids
+----------
+With --grids FILE it also writes every track's full grid: the time of each
+beat in milliseconds, which beat of the bar the first one is, and the tempo
+wherever it changes. That is the reference for the beat grid the app writes
+(tools/measure/measure_grid.mjs). The files are only read, never written.
+
 Usage
 -----
-    python3 tools/groundtruth/rekordbox_anlz.py [--anlz DIR] [--out FILE]
+    python3 tools/groundtruth/rekordbox_anlz.py [--anlz DIR] [--out FILE] [--grids FILE]
 
 Defaults write to `ground-truth/rekordbox_bpm.json`, which .gitignore keeps out
 of the repository: it describes a private library and is not ours to publish.
@@ -108,6 +115,45 @@ def read_tempo(data, body, end):
     return weight.most_common(1)[0][0] / 100.0
 
 
+def read_grid(data, body, end):
+    """Every beat: (milliseconds, beat in bar 1..4, BPM * 100)."""
+    count = struct.unpack_from(">I", data, body - 4)[0]
+    count = min(count, (end - body) // 8)
+    out = []
+    for i in range(max(0, count)):
+        beat, tempo, ms = struct.unpack_from(">HHI", data, body + i * 8)
+        out.append((ms, beat, tempo))
+    return out
+
+
+def parse_grid(path):
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    track_path = None
+    grid = None
+    for tag, start, body, end in sections(data):
+        if tag == b"PPTH":
+            track_path = read_path(data, body, end)
+        elif tag == b"PQTZ":
+            grid = read_grid(data, body, end)
+    if not track_path or not grid:
+        return None
+    tempos = []
+    for i, (_, _, tempo) in enumerate(grid):
+        if not tempos or tempos[-1][1] != tempo:
+            tempos.append([i, tempo])
+    return {
+        "path": track_path,
+        "ms": [ms for ms, _, _ in grid],
+        "firstBeatInBar": grid[0][0],
+        "bars": [beat for _, beat, _ in grid[:16]],
+        # [beat index where it starts, BPM * 100]; one entry is a constant grid.
+        "tempos": tempos,
+    }
+
+
 def parse(path):
     try:
         data = path.read_bytes()
@@ -131,6 +177,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--anlz", type=pathlib.Path, default=DEFAULT_ANLZ)
     ap.add_argument("--out", type=pathlib.Path, default=DEFAULT_OUT)
+    ap.add_argument("--grids", type=pathlib.Path, default=None)
     args = ap.parse_args()
 
     if not args.anlz.is_dir():
@@ -164,6 +211,18 @@ def main():
         "byName": by_name,
     }
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    if args.grids:
+        grids = {}
+        for f in files:
+            g = parse_grid(f)
+            if g:
+                grids[os.path.basename(g["path"])] = g
+        args.grids.parent.mkdir(parents=True, exist_ok=True)
+        args.grids.write_text(json.dumps({"source": str(args.anlz), "byName": grids},
+                                         ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        constant = sum(1 for g in grids.values() if len(g["tempos"]) == 1)
+        print("grids           %d (%d with one tempo) -> %s" % (len(grids), constant, args.grids))
 
     graded = [t for t in by_name.values() if t["bpm"]]
     print("ANLZ files      %d" % len(files))
