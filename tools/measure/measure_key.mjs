@@ -22,20 +22,31 @@
  * Counting them together would hide which of the two known weaknesses is
  * actually costing us.
  *
+ * Two label sets
+ * --------------
+ *   rekordbox    (default) the owner's library, keys from a copy of master.db.
+ *                Large, but the labels are Rekordbox's own detector, not ears.
+ *   giantsteps   GiantSteps-key: 604 two-minute Beatport previews whose keys
+ *                were corrected by listeners (Knees et al., ISMIR 2015). The
+ *                outside check -- nothing in dsp.js was tuned on it. Expects
+ *                ground-truth/giantsteps/key-dataset (the annotation repo) and
+ *                ground-truth/giantsteps/audio (the previews).
+ *
  * Usage
  * -----
- *   node tools/measure/measure_key.mjs [--limit N] [--jobs N] [--seed N] [--out FILE]
- *   node tools/measure/measure_key.mjs --rescore
+ *   node tools/measure/measure_key.mjs [--set rekordbox|giantsteps] [--limit N] [--jobs N] [--seed N] [--out FILE]
+ *   node tools/measure/measure_key.mjs --rescore [--out FILE]
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
   ROOT, loadDsp, decodeMono, arg, pickSample, runPool,
   printCounts, printByFolder, writeResults, rescore,
 } from "./lib/measure.mjs";
+import { camelotFromKeyName } from "./key_report.mjs";
 
 // worker.js:25 -- the key runs on the 22.05 kHz mono, librosa's default rate,
 // which is what the CQT kernels in dsp.js were built for.
@@ -83,27 +94,47 @@ if (!isMainThread) {
   });
 }
 
-async function main() {
+// { path: Camelot } for every labelled track whose audio is on disk.
+function loadLabels(set) {
+  if (set === "giantsteps") {
+    const base = join(ROOT, "ground-truth/giantsteps");
+    const labels = {};
+    for (const f of readdirSync(join(base, "key-dataset/annotations/key"))) {
+      if (!f.endsWith(".key")) continue;
+      const key = camelotFromKeyName(readFileSync(join(base, "key-dataset/annotations/key", f), "utf8"));
+      const audio = join(base, "audio", f.replace(/\.key$/, ".mp3"));
+      if (key && existsSync(audio)) labels[audio] = key;
+    }
+    return labels;
+  }
   const db = JSON.parse(readFileSync(join(ROOT, "ground-truth/rekordbox_db.json"), "utf8")).byPath;
-  const outPath = arg("--out", join(ROOT, "ground-truth/key_results.json"));
+  const labels = {};
+  // A label is only useful next to a file we can still decode: the database
+  // remembers tracks that have since been moved off the drive.
+  for (const p of Object.keys(db)) if (parseCamelot(db[p].key) && existsSync(p)) labels[p] = db[p].key;
+  return labels;
+}
+
+async function main() {
+  const set = arg("--set", "rekordbox");
+  if (!["rekordbox", "giantsteps"].includes(set)) throw new Error("unknown --set " + set);
+  const outPath = arg("--out", join(ROOT, set === "rekordbox" ? "ground-truth/key_results.json" : `ground-truth/key_results_${set}.json`));
 
   let results;
   if (process.argv.includes("--rescore")) {
     results = rescore(outPath, classify);
   } else {
-    // A label is only useful next to a file we can still decode: the database
-    // remembers tracks that have since been moved off the drive.
-    const usable = Object.keys(db).filter((p) => parseCamelot(db[p].key) && existsSync(p));
+    const labels = loadLabels(set);
     results = [];
     await runPool(fileURLToPath(import.meta.url),
-      pickSample(usable).map((p) => ({ name: p, file: p })),
+      pickSample(Object.keys(labels)).map((p) => ({ name: p, file: p })),
       (r) => {
-        const truth = db[r.name].key;
+        const truth = labels[r.name];
         results.push({ ...r, truth, verdict: classify(r.ours, truth), file: r.name });
       });
   }
 
-  const counts = printCounts("key vs Rekordbox", results, CATEGORIES);
+  const counts = printCounts(`key vs ${set}`, results, CATEGORIES);
   const n = results.length;
   const share = (k) => ((100 * (counts[k] || 0)) / n).toFixed(1);
   const mixable = (counts.exact || 0) + (counts.relative || 0) + (counts.neighbour || 0);

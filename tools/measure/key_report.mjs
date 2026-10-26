@@ -12,6 +12,9 @@
  *                major (B), and how often the mode itself is wrong
  *   error pairs  the commonest (truth -> ours) mistakes, with their relation
  *   per key      exact rate for each of the 24 true keys
+ *   by step     every answer placed by how far round the wheel it landed and
+ *                whether the mode flipped -- the whole error pattern in two rows
+ *   --matrix     the full 24 x 24 table, true key down, our answer across
  *
  * Held-out halves
  * ---------------
@@ -30,7 +33,7 @@
  *
  * Usage
  * -----
- *   node tools/measure/key_report.mjs [RESULTS.json] [--half train|test] [--top N]
+ *   node tools/measure/key_report.mjs [RESULTS.json] [--half train|test] [--top N] [--matrix]
  *   node tools/measure/key_report.mjs --compare BEFORE.json AFTER.json [--half test]
  *   (default results file: ground-truth/key_results.json)
  */
@@ -69,6 +72,60 @@ export function relation(ours, truth) {
 }
 
 const COMPATIBLE = new Set(["exact", "relative", "neighbour"]);
+
+/*
+ * "Eb minor" -> "2A". Annotated datasets name keys by tonic and mode; the app
+ * speaks Camelot. Sharps and flats both accepted, since sources differ.
+ */
+const PITCH = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+const CAMELOT_MAJOR = ["8B", "3B", "10B", "5B", "12B", "7B", "2B", "9B", "4B", "11B", "6B", "1B"];
+const CAMELOT_MINOR = ["5A", "12A", "7A", "2A", "9A", "4A", "11A", "6A", "1A", "8A", "3A", "10A"];
+
+export function camelotFromKeyName(text) {
+  const m = /^\s*([A-G])\s*([#b♯♭]?)\s*(major|minor|maj|min)\s*$/i.exec(String(text || ""));
+  if (!m) return null;
+  let pc = PITCH[m[1].toUpperCase()];
+  if (m[2] === "#" || m[2] === "♯") pc += 1;
+  if (m[2] === "b" || m[2] === "♭") pc -= 1;
+  pc = (pc + 12) % 12;
+  return /^min/i.test(m[3]) ? CAMELOT_MINOR[pc] : CAMELOT_MAJOR[pc];
+}
+
+// The 24 Camelot codes in wheel order, minor ring first.
+export const WHEEL = [
+  ...Array.from({ length: 12 }, (_, i) => `${i + 1}A`),
+  ...Array.from({ length: 12 }, (_, i) => `${i + 1}B`),
+];
+
+/*
+ * Where an answer landed relative to the truth: steps round the wheel (-5..+6,
+ * signed, positive clockwise) and whether the letter flipped. 8A -> 7A is
+ * { step: -1, flip: false }; 8A -> 8B is { step: 0, flip: true }.
+ */
+export function wheelStep(ours, truth) {
+  const a = parseCamelot(ours);
+  const b = parseCamelot(truth);
+  if (!a || !b) return null;
+  let step = (a.n - b.n + 12) % 12;
+  if (step > 6) step -= 12;
+  return { step, flip: a.letter !== b.letter };
+}
+
+// Counts keyed truth -> ours over WHEEL, with a "none" column for no answer.
+export function confusionMatrix(rows) {
+  const m = {};
+  for (const t of WHEEL) {
+    m[t] = { none: 0 };
+    for (const o of WHEEL) m[t][o] = 0;
+  }
+  for (const r of rows) {
+    const t = parseCamelot(r.truth);
+    if (!t) continue;
+    const o = parseCamelot(r.ours);
+    m[`${t.n}${t.letter}`][o ? `${o.n}${o.letter}` : "none"]++;
+  }
+  return m;
+}
 
 /*
  * Which held-out half a track belongs to. FNV-1a over the name: stable across
@@ -127,6 +184,17 @@ export function summarize(rows) {
     if (verdict(r) === "exact") perKey[k].exact++;
   }
 
+  // byStep[mode][flip ? "flip" : "same"][step] -- the confusion matrix
+  // folded by symmetry, which is what shows a systematic bias.
+  const byStep = {};
+  for (const r of scored) {
+    const w = wheelStep(r.ours, r.truth);
+    if (!w) continue;
+    const mode = parseCamelot(r.truth).letter === "A" ? "minor" : "major";
+    const row = ((byStep[mode] ||= { same: {}, flip: {} })[w.flip ? "flip" : "same"]);
+    row[w.step] = (row[w.step] || 0) + 1;
+  }
+
   const categories = {};
   for (const r of scored) categories[verdict(r)] = (categories[verdict(r)] || 0) + 1;
 
@@ -137,6 +205,7 @@ export function summarize(rows) {
     failed: rate(count((r) => verdict(r) === "failed"), scored.length),
     categories,
     byMode,
+    byStep,
     pairs: [...pairs.values()].sort((a, b) => b.n - a.n || a.pair.localeCompare(b.pair)),
     perKey,
   };
@@ -222,7 +291,7 @@ function option(flag, fallback) {
 
 const pct = (x) => (100 * x).toFixed(1) + "%";
 
-function printReport(title, rows, top) {
+function printReport(title, rows, top, matrix) {
   const s = summarize(rows);
   console.log(`\n${title}: ${s.n} tracks`);
   console.log(`  exact        ${pct(s.exact)}`);
@@ -244,6 +313,26 @@ function printReport(title, rows, top) {
   for (const p of s.pairs.slice(0, top)) {
     console.log(`    ${p.pair.padEnd(14)} ${String(p.n).padStart(4)}  ${p.relation}`);
   }
+  console.log(`\n  answers by step round the wheel (0 = right number), true mode down:`);
+  const steps = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6];
+  console.log("    " + "".padEnd(20) + steps.map((k) => String(k > 0 ? "+" + k : k).padStart(5)).join(""));
+  for (const mode of ["minor", "major"]) {
+    for (const [kind, label] of [["same", "same mode"], ["flip", "mode flipped"]]) {
+      const row = (s.byStep[mode] || {})[kind] || {};
+      console.log("    " + `${mode}, ${label}`.padEnd(20) + steps.map((k) => String(row[k] || 0).padStart(5)).join(""));
+    }
+  }
+
+  if (matrix) {
+    const m = confusionMatrix(rows);
+    console.log(`\n  full matrix, true key down, our answer across:`);
+    console.log("    " + "".padEnd(4) + WHEEL.map((k) => k.padStart(4)).join("") + "  none");
+    for (const t of WHEEL) {
+      const cells = WHEEL.map((o) => (m[t][o] ? String(m[t][o]) : "·").padStart(4)).join("");
+      console.log("    " + t.padEnd(4) + cells + String(m[t].none || "·").padStart(6));
+    }
+  }
+
   console.log(`\n  exact by true key:`);
   const keys = Object.keys(s.perKey).sort((a, b) => {
     const x = parseCamelot(a); const y = parseCamelot(b);
@@ -256,6 +345,7 @@ function printReport(title, rows, top) {
 function main() {
   const half = option("--half", null);
   const top = Number(option("--top", 15));
+  const matrix = process.argv.includes("--matrix");
   const keep = (rows) => (half ? rows.filter((r) => halfOf(r.name) === half) : rows);
   const suffix = half ? ` [${half} half]` : "";
 
@@ -263,8 +353,8 @@ function main() {
   if (compareAt > 0) {
     const before = keep(load(process.argv[compareAt + 1]));
     const after = keep(load(process.argv[compareAt + 2]));
-    printReport("before" + suffix, before, top);
-    printReport("after" + suffix, after, top);
+    printReport("before" + suffix, before, top, matrix);
+    printReport("after" + suffix, after, top, matrix);
     const t = mcnemar(before, after);
     console.log(`\nMcNemar on exact, ${t.n} paired tracks${suffix}:`);
     console.log(`  better ${t.better}  worse ${t.worse}  z = ${t.z.toFixed(2)}  p = ${t.p < 0.0001 ? t.p.toExponential(1) : t.p.toFixed(4)}`);
@@ -274,7 +364,7 @@ function main() {
 
   const path = process.argv[2] && !process.argv[2].startsWith("--")
     ? process.argv[2] : join(ROOT, "ground-truth/key_results.json");
-  printReport("key" + suffix, keep(load(path)), top);
+  printReport("key" + suffix, keep(load(path)), top, matrix);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

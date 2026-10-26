@@ -5,7 +5,9 @@
  *
  *   node tools/test/test_key_report.mjs
  */
-import { relation, halfOf, summarize, mcnemar } from "../measure/key_report.mjs";
+import {
+  relation, halfOf, summarize, mcnemar, camelotFromKeyName, wheelStep, confusionMatrix, WHEEL,
+} from "../measure/key_report.mjs";
 
 const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
@@ -19,6 +21,31 @@ check("1A при истине 12A — сосед через конец круг�
 check("9B при истине 8A — ошибка", relation("9B", "8A") === "wrong");
 check("нет ответа — failed", relation(null, "8A") === "failed");
 check("нет истины — не считается", relation("8A", "") === "unlabelled");
+
+/* ---------- Key names from annotated sets ---------- */
+
+check("A minor -> 8A", camelotFromKeyName("A minor") === "8A");
+check("C major -> 8B", camelotFromKeyName("C major") === "8B");
+check("Eb minor -> 2A", camelotFromKeyName("Eb minor") === "2A");
+check("D# minor совпадает с Eb minor", camelotFromKeyName("D# minor") === "2A");
+check("Gb major -> 2B, F# major тоже", camelotFromKeyName("Gb major") === "2B" && camelotFromKeyName("F# major") === "2B");
+check("Cb minor заворачивается к B minor -> 10A", camelotFromKeyName("Cb minor") === "10A");
+check("лишние пробелы и перевод строки не мешают", camelotFromKeyName("  F minor\n") === "4A");
+check("мусор -> null", camelotFromKeyName("H minor") === null && camelotFromKeyName("") === null);
+{
+  // Every one of the 24 names lands on a distinct Camelot code.
+  const names = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+  const codes = new Set(names.flatMap((n) => [camelotFromKeyName(n + " major"), camelotFromKeyName(n + " minor")]));
+  check(`24 названия -> 24 разных кода (${codes.size})`, codes.size === 24 && WHEEL.every((k) => codes.has(k)));
+}
+
+/* ---------- Steps round the wheel ---------- */
+
+check("8A -> 7A: шаг -1, лад тот же", JSON.stringify(wheelStep("7A", "8A")) === '{"step":-1,"flip":false}');
+check("12A -> 1A: шаг +1 через конец круга", wheelStep("1A", "12A").step === 1);
+check("8A -> 8B: шаг 0, лад перевернулся", wheelStep("8B", "8A").step === 0 && wheelStep("8B", "8A").flip);
+check("противоположная сторона круга — +6", wheelStep("2A", "8A").step === 6);
+check("нет ответа — нет шага", wheelStep(null, "8A") === null);
 
 /* ---------- Held-out halves ---------- */
 
@@ -48,6 +75,15 @@ check("мажор: 2 трека, лад перепутан в одном", s.byM
 check("отказ ответить не считается ошибкой лада", Math.abs(s.byMode.minor.modeWrong - 0.25) < 1e-9);
 check("пары ошибок посчитаны", s.pairs.some((p) => p.pair === "8A -> 7A" && p.relation === "neighbour" && p.n === 1));
 check("отсутствие ответа видно в парах", s.pairs.some((p) => p.pair === "3A -> none"));
+check("шаги: минор, тот же лад, -1 — один трек", s.byStep.minor.same[-1] === 1);
+check("шаги: мажор, перевёрнутый лад, 0 — один трек", s.byStep.major.flip[0] === 1);
+{
+  const m = confusionMatrix(rows);
+  check("матрица: 8A -> 8B записан в строку 8A", m["8A"]["8B"] === 1 && m["8B"]["8A"] === 1);
+  check("матрица: отказ попадает в столбец none", m["3A"].none === 1);
+  const total = WHEEL.reduce((acc, t) => acc + Object.values(m[t]).reduce((a, b) => a + b, 0), 0);
+  check(`матрица: всего столько, сколько размеченных треков (${total})`, total === 6);
+}
 
 /* ---------- McNemar ---------- */
 
