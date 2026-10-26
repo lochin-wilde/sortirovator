@@ -41,6 +41,10 @@
  * is measured on (see keyWindow in lib/measure.mjs); "first", the default, is
  * what the app does. Each result records how long detectKey took, in ms.
  *
+ * --detector cnn measures the network in web/js/keycnn.js instead of the
+ * chroma detector in dsp.js: same windows, but decoded at 44.1 kHz, the rate
+ * it was trained on. Results then also carry `second`, the runner-up key.
+ *
  * --half train|test measures only that held-out half (halfOf in
  * key_report.mjs), so a run fits in half the time; key_report.mjs reads
  * several result files joined with commas.
@@ -64,6 +68,8 @@ import { halfOf } from "./key_report.mjs";
 // worker.js:25 -- the key runs on the 22.05 kHz mono, librosa's default rate,
 // which is what the CQT kernels in dsp.js were built for.
 const KEY_RATE = 22050;
+// keycnn.js: the network was trained on 44.1 kHz audio.
+const CNN_RATE = 44100;
 const CATEGORIES = ["exact", "relative", "neighbour", "wrong", "failed"];
 
 const CAMELOT = /^(\d{1,2})([AB])$/;
@@ -89,28 +95,36 @@ function classify(ours, truth) {
 
 if (!isMainThread) {
   let dsp = null;
+  let cnnModel = null;
   parentPort.on("message", async (task) => {
     if (task === null) process.exit(0);
     if (!dsp) {
       const patchFile = arg("--patch", null);
       const patches = patchFile ? (await import(pathToFileURL(resolve(patchFile)).href)).default : [];
-      dsp = loadDsp(["detectKey"], "", patches);
+      dsp = loadDsp(["detectKey", "parseKeyCnnModel", "detectKeyCnn"],
+        readFileSync(join(ROOT, "web/js/keycnn.js"), "utf8"), patches);
+      if (arg("--detector", "chroma") === "cnn") {
+        const file = readFileSync(join(ROOT, "web/data/key_cnn.bin"));
+        cnnModel = dsp.parseKeyCnnModel(file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength));
+      }
     }
     try {
       const window = arg("--window", "first");
-      const decoded = decodeMono(task.file, KEY_RATE, window === "first" ? undefined : WHOLE_TRACK_MAX_SECONDS).y;
-      const y = keyWindow(decoded, KEY_RATE, window);
-      if (y.length < KEY_RATE) throw new Error("too short");
+      const rate = cnnModel ? CNN_RATE : KEY_RATE;
+      const decoded = decodeMono(task.file, rate, window === "first" ? undefined : WHOLE_TRACK_MAX_SECONDS).y;
+      const y = keyWindow(decoded, rate, window);
+      if (y.length < rate) throw new Error("too short");
       const started = performance.now();
-      const key = dsp.detectKey(y, KEY_RATE);
+      const key = cnnModel ? dsp.detectKeyCnn(y, cnnModel) : dsp.detectKey(y, KEY_RATE);
       const ms = Math.round(performance.now() - started);
       parentPort.postMessage({
         name: task.name,
         ours: key ? key.key : null,
         confidence: key && key.confidence !== null ? Math.round(key.confidence * 1000) / 1000 : null,
         confident: key ? !!key.confident : false,
+        second: key && key.second ? key.second : undefined,
         ms,
-        seconds: Math.round(y.length / KEY_RATE),
+        seconds: Math.round(y.length / rate),
       });
     } catch (e) {
       parentPort.postMessage({ name: task.name, ours: null, error: String(e.message || e) });

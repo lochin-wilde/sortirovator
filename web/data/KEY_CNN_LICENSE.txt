@@ -1,0 +1,24 @@
+key_cnn.bin -- key classification network
+
+Source:   madmom_models, key/2018/key_cnn.pkl
+          https://github.com/CPJKU/madmom_models
+Authors:  Filip Korzeniowski and Gerhard Widmer, Institute of Computational
+          Perception, Johannes Kepler University Linz
+Paper:    F. Korzeniowski and G. Widmer, "Genre-Agnostic Key Classification
+          with Convolutional Neural Networks", Proceedings of the 19th
+          International Society for Music Information Retrieval Conference
+          (ISMIR), Paris, France, 2018.
+
+License:  Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+          International (CC BY-NC-SA 4.0)
+          https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+Changes:  The trained weights are unchanged. They were converted from madmom's
+          pickle format to a flat float32 file by tools/build/convert_key_cnn.py,
+          and each batch-normalization layer's four vectors were folded into
+          two (scale = gamma * inv_std, shift = beta - mean * scale), which is
+          the same arithmetic rearranged.
+
+This file and key_cnn.bin are under CC BY-NC-SA 4.0, not under the MIT license
+that covers the rest of this repository. In particular, they may not be used
+for commercial purposes.
