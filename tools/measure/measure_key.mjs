@@ -44,14 +44,13 @@
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import {
-  ROOT, loadDsp, patchSource, decodeMono, arg, pickSample, runPool,
+  ROOT, loadDsp, patchSource, loadKeyLabels, decodeMono, arg, pickSample, runPool,
   printCounts, printByFolder, writeResults, rescore,
 } from "./lib/measure.mjs";
-import { camelotFromKeyName } from "./key_report.mjs";
 
 // worker.js:25 -- the key runs on the 22.05 kHz mono, librosa's default rate,
 // which is what the CQT kernels in dsp.js were built for.
@@ -104,27 +103,6 @@ if (!isMainThread) {
   });
 }
 
-// { path: Camelot } for every labelled track whose audio is on disk.
-function loadLabels(set) {
-  if (set === "giantsteps") {
-    const base = join(ROOT, "ground-truth/giantsteps");
-    const labels = {};
-    for (const f of readdirSync(join(base, "key-dataset/annotations/key"))) {
-      if (!f.endsWith(".key")) continue;
-      const key = camelotFromKeyName(readFileSync(join(base, "key-dataset/annotations/key", f), "utf8"));
-      const audio = join(base, "audio", f.replace(/\.key$/, ".mp3"));
-      if (key && existsSync(audio)) labels[audio] = key;
-    }
-    return labels;
-  }
-  const db = JSON.parse(readFileSync(join(ROOT, "ground-truth/rekordbox_db.json"), "utf8")).byPath;
-  const labels = {};
-  // A label is only useful next to a file we can still decode: the database
-  // remembers tracks that have since been moved off the drive.
-  for (const p of Object.keys(db)) if (parseCamelot(db[p].key) && existsSync(p)) labels[p] = db[p].key;
-  return labels;
-}
-
 async function main() {
   const patchFile = arg("--patch", null);
   if (patchFile) {
@@ -134,14 +112,13 @@ async function main() {
     console.log("variant: %s (%d patches)", patchFile, patches.length);
   }
   const set = arg("--set", "rekordbox");
-  if (!["rekordbox", "giantsteps"].includes(set)) throw new Error("unknown --set " + set);
   const outPath = arg("--out", join(ROOT, set === "rekordbox" ? "ground-truth/key_results.json" : `ground-truth/key_results_${set}.json`));
 
   let results;
   if (process.argv.includes("--rescore")) {
     results = rescore(outPath, classify);
   } else {
-    const labels = loadLabels(set);
+    const labels = loadKeyLabels(set);
     results = [];
     await runPool(fileURLToPath(import.meta.url),
       pickSample(Object.keys(labels)).map((p) => ({ name: p, file: p })),

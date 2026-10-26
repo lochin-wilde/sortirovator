@@ -16,10 +16,11 @@
 
 import { Worker } from "node:worker_threads";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import os from "node:os";
+import { camelotFromKeyName } from "../key_report.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = join(HERE, "../../..");
@@ -42,6 +43,39 @@ export function loadDsp(names, extra = "", patches = []) {
   const code = patchSource(readFileSync(join(ROOT, "web/js/dsp.js"), "utf8"), patches);
   // eslint-disable-next-line no-new-func
   return new Function(code + "\n" + extra + `\nreturn { ${names.join(", ")} };`)();
+}
+
+const CAMELOT_CODE = /^(?:[1-9]|1[0-2])[AB]$/;
+
+/*
+ * Key labels, as { path: Camelot }, for every labelled track whose audio is on
+ * disk. Two sets:
+ *   rekordbox    the owner's library, keys from a copy of master.db.
+ *   giantsteps   GiantSteps-key, ground-truth/giantsteps/{key-dataset,audio}.
+ */
+// { path: Camelot } for every labelled track whose audio is on disk.
+export function loadKeyLabels(set) {
+  if (!["rekordbox", "giantsteps"].includes(set)) throw new Error("unknown key label set " + set);
+  if (set === "giantsteps") {
+    const base = join(ROOT, "ground-truth/giantsteps");
+    const labels = {};
+    for (const f of readdirSync(join(base, "key-dataset/annotations/key"))) {
+      if (!f.endsWith(".key")) continue;
+      const key = camelotFromKeyName(readFileSync(join(base, "key-dataset/annotations/key", f), "utf8"));
+      const audio = join(base, "audio", f.replace(/\.key$/, ".mp3"));
+      if (key && existsSync(audio)) labels[audio] = key;
+    }
+    return labels;
+  }
+  const db = JSON.parse(readFileSync(join(ROOT, "ground-truth/rekordbox_db.json"), "utf8")).byPath;
+  const labels = {};
+  // A label is only useful next to a file we can still decode: the database
+  // remembers tracks that have since been moved off the drive.
+  for (const p of Object.keys(db)) {
+    const key = String(db[p].key || "").trim().toUpperCase();
+    if (CAMELOT_CODE.test(key) && existsSync(p)) labels[p] = key;
+  }
+  return labels;
 }
 
 /*

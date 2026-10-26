@@ -25,17 +25,15 @@
  *
  * Usage
  * -----
- *   node tools/measure/dump_chroma.mjs [--limit N] [--jobs N] [--out FILE]
+ *   node tools/measure/dump_chroma.mjs [--set rekordbox|giantsteps] [--limit N] [--jobs N] [--out FILE]
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";
-import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { ROOT, loadDsp, decodeMono, arg, pickSample, runPool, writeResults } from "./lib/measure.mjs";
+import { ROOT, loadDsp, loadKeyLabels, decodeMono, arg, pickSample, runPool, writeResults } from "./lib/measure.mjs";
 
 const KEY_RATE = 22050; // worker.js:25
-const CAMELOT = /^\d{1,2}[AB]$/;
 
 /*
  * Appended inside dsp.js's scope. `pearson` is a function declaration, so the
@@ -80,11 +78,10 @@ if (!isMainThread) {
 }
 
 async function main() {
-  const db = JSON.parse(readFileSync(join(ROOT, "ground-truth/rekordbox_db.json"), "utf8")).byPath;
-  const outPath = arg("--out", join(ROOT, "ground-truth/chroma.json"));
-
-  const usable = Object.keys(db)
-    .filter((p) => CAMELOT.test(String(db[p].key || "").toUpperCase()) && existsSync(p));
+  const set = arg("--set", "rekordbox");
+  const labels = loadKeyLabels(set);
+  const outPath = arg("--out", join(ROOT, set === "rekordbox" ? "ground-truth/chroma.json" : `ground-truth/chroma_${set}.json`));
+  const usable = Object.keys(labels);
 
   const tracks = {};
   let captured = 0;
@@ -92,7 +89,7 @@ async function main() {
     pickSample(usable).map((p) => ({ name: p, file: p })),
     (r) => {
       if (r.chroma) captured++;
-      tracks[r.name] = { chroma: r.chroma, key: db[r.name].key, shipped: r.key };
+      tracks[r.name] = { chroma: r.chroma, key: labels[r.name], shipped: r.key };
     });
 
   const total = Object.keys(tracks).length;
