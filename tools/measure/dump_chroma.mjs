@@ -25,7 +25,12 @@
  *
  * Usage
  * -----
- *   node tools/measure/dump_chroma.mjs [--set rekordbox|giantsteps] [--limit N] [--jobs N] [--out FILE]
+ *   node tools/measure/dump_chroma.mjs [--set rekordbox|giantsteps] [--blocks SECONDS] [--limit N] [--jobs N] [--out FILE]
+ *
+ * --blocks also stores the chroma of every consecutive SECONDS-long stretch,
+ * as { n: frames, chroma } -- what tools/measure/try_key_segments.mjs needs to
+ * vote over segments of any length that is a multiple of SECONDS. The frame
+ * means of the blocks, weighted by n, add back up to the whole-track chroma.
  */
 
 import { isMainThread, parentPort } from "node:worker_threads";
@@ -42,33 +47,61 @@ const KEY_RATE = 22050; // worker.js:25
  */
 const CAPTURE = `
 let __capture = null;
+let __frames = null;
 const __pearson = pearson;
 pearson = function (a, b) {
   if (__capture !== null && __capture.length === 0) __capture.push(Array.from(a));
   return __pearson(a, b);
 };
-function chromaOf(y, sr) {
+function chromaOf(y, sr, blockSeconds) {
   __capture = [];
+  __frames = null;
   const result = detectKey(y, sr);
   const captured = __capture[0] || null;
   __capture = null;
-  return { chroma: captured, key: result.key, confidence: result.confidence };
+  let blocks = null;
+  if (blockSeconds && __frames) {
+    const per = Math.max(1, Math.round((blockSeconds * sr) / CQT_HOP));
+    const total = __frames[0].length;
+    blocks = [];
+    for (let start = 0; start < total; start += per) {
+      const end = Math.min(total, start + per);
+      const chroma = [];
+      for (let c = 0; c < 12; c++) {
+        let acc = 0;
+        for (let t = start; t < end; t++) acc += __frames[c][t];
+        chroma.push(acc / (end - start));
+      }
+      blocks.push({ n: end - start, chroma });
+    }
+  }
+  return { chroma: captured, blocks, key: result.key, confidence: result.confidence };
 }
 `;
 
+/*
+ * The per-frame chroma, taken just before detectKey averages it. Same caveat
+ * as the pearson hook: a patch that stops matching throws (patchSource), and
+ * a capture that comes back empty leaves `blocks` null for every track.
+ */
+const FRAMES_LINE = "  if (perClassFrames[0].length === 0) return { key: null, confidence: null, confident: false };";
+const FRAMES_PATCH = [[FRAMES_LINE, "  __frames = perClassFrames;\n" + FRAMES_LINE]];
+
 if (!isMainThread) {
-  const dsp = loadDsp(["chromaOf"], CAPTURE);
+  const dsp = loadDsp(["chromaOf"], CAPTURE, FRAMES_PATCH);
+  const blockSeconds = parseFloat(arg("--blocks", "0")) || 0;
   parentPort.on("message", (task) => {
     if (task === null) process.exit(0);
     try {
       const { y } = decodeMono(task.file, KEY_RATE);
       if (y.length < KEY_RATE) throw new Error("too short");
-      const out = dsp.chromaOf(y, KEY_RATE);
+      const out = dsp.chromaOf(y, KEY_RATE, blockSeconds);
       parentPort.postMessage({
         name: task.name,
         // Six decimals is far below anything the scoring can resolve and keeps
         // the file to a few megabytes.
         chroma: out.chroma ? out.chroma.map((v) => Math.round(v * 1e6) / 1e6) : null,
+        blocks: out.blocks ? out.blocks.map((b) => ({ n: b.n, chroma: b.chroma.map((v) => Math.round(v * 1e6) / 1e6) })) : null,
         key: out.key,
       });
     } catch (e) {
@@ -90,6 +123,7 @@ async function main() {
     (r) => {
       if (r.chroma) captured++;
       tracks[r.name] = { chroma: r.chroma, key: labels[r.name], shipped: r.key };
+      if (r.blocks) tracks[r.name].blocks = r.blocks;
     });
 
   const total = Object.keys(tracks).length;
