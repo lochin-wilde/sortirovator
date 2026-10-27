@@ -99,7 +99,7 @@ if (!isMainThread) {
       const whole = decodeMono(task.file, RATE, WHOLE_TRACK_MAX_SECONDS).y;
       const y = whole.subarray(0, Math.min(whole.length, ANALYSIS_MAX_SECONDS * RATE));
       const tempo = dsp.analyzeTempo(y, RATE);
-      const grid = tempo.bpm ? dsp.estimateBeatGrid(y, RATE, tempo.bpm, tempo.mode) : null;
+      const grid = tempo.bpm ? dsp.estimateBeatGrid(y, RATE, tempo.bpm, tempo) : null;
       if (!grid) { parentPort.postMessage({ name: task.name, file: task.file, grid: null }); return; }
       const started = performance.now();
       const candidates = dsp.downbeatCandidates(dsp.beatSyncFeatures(y, RATE, grid.bpm, grid.firstBeat));

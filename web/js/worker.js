@@ -112,11 +112,7 @@ async function handleAnalyze(msg) {
     // decided on the finished archive (app.js, downloadZip).
     if (tempo.bpm) {
       report("grid", 0);
-      result.grid = estimateBeatGrid(session.monoNative, session.sampleRate, tempo.bpm, tempo.mode);
-      // Which beat starts the bar, only for a grid that will be written.
-      if (result.grid && result.grid.place) {
-        result.grid.downbeat = estimateDownbeat(session.monoNative, session.sampleRate, result.grid.bpm, result.grid.firstBeat).phase;
-      }
+      result.grid = estimateBeatGrid(session.monoNative, session.sampleRate, tempo.bpm, tempo);
     }
     report("key", 0);
     // The network wants 44.1 kHz; the main thread sends a resampled copy

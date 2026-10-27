@@ -16,7 +16,8 @@ const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
 const dsp = new Function(readFileSync("web/js/dsp.js", "utf8") + readFileSync("web/js/downbeat.js", "utf8")
-  + "return { beatSyncFeatures, downbeatCandidates, estimateDownbeat, DOWNBEAT_WEIGHTS };")();
+  + readFileSync("web/js/beatgrid.js", "utf8")
+  + "return { beatSyncFeatures, downbeatCandidates, downbeatFrames, estimateDownbeat, barContrast, estimateBeatGrid, DOWNBEAT_WEIGHTS };")();
 
 /* ---------- Labels from Rekordbox's count ---------- */
 
@@ -73,6 +74,21 @@ function track(seconds, downbeatPhase) {
   const barChroma = c.map((x) => x[6]);
   check(`смена аккорда за такт сильнее всего у фазы 2 (${barChroma.map((v) => v.toFixed(2))})`, barChroma.indexOf(Math.max(...barChroma)) === 2);
   check("слишком коротко — без признаков", dsp.downbeatCandidates(dsp.beatSyncFeatures(track(8, 0), sr, bpm, first)) === null);
+  const y = track(40, 2);
+  const shared = dsp.beatSyncFeatures(y, sr, bpm, first, dsp.downbeatFrames(y, sr));
+  check("общий спектр для нескольких сеток даёт те же доли", JSON.stringify(shared) === JSON.stringify(beats));
+}
+{
+  const y = track(40, 2);
+  const on = dsp.downbeatCandidates(dsp.beatSyncFeatures(y, sr, bpm, first));
+  const off = dsp.downbeatCandidates(dsp.beatSyncFeatures(y, sr, bpm, first + period / 2));
+  const c = dsp.barContrast(on, off);
+  const back = dsp.barContrast(off, on);
+  check(`на слабой доле такты размыты: разница лучшего такта ${c[0].toFixed(2)} < 0`, c[0] < 0);
+  check("контраст в обратную сторону — с обратным знаком", c.every((v, j) => Math.abs(v + back[j]) < 1e-12));
+  check("без признаков — нули, по одному на признак и общий счёт", dsp.barContrast(null, on).length === 11 && dsp.barContrast(null, on).every((v) => v === 0));
+  // This track has no treble: the top band's ratios are rounding noise.
+  check(`шум пустой полосы ограничен (${Math.max(...c.slice(1).map(Math.abs)).toFixed(2)} ≤ 1.5)`, c.slice(1).every((v) => Math.abs(v) <= 1.5));
 }
 {
   const none = dsp.estimateDownbeat(track(40, 2), sr, bpm, first, null);
@@ -82,6 +98,9 @@ function track(seconds, downbeatPhase) {
     check(`с обученной моделью — такт с 3-й доли (фаза ${got.phase}, ${got.probs})`, got.phase === 2);
     const plain = dsp.estimateDownbeat(track(40, 0), sr, bpm, first);
     check(`аккорды с первой доли — фаза 0 (фаза ${plain.phase})`, plain.phase === 0);
+    const grid = dsp.estimateBeatGrid(track(40, 2), sr, bpm, { mode: "constant", min: bpm, max: bpm });
+    check(`сетка трека сама несёт начало такта: 3-я доля (${grid.firstBeat} с, фаза ${grid.downbeat})`,
+      Math.abs(grid.firstBeat - first) < 0.03 && grid.downbeat === 2);
   }
 }
 

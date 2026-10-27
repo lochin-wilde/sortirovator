@@ -320,51 +320,53 @@ function fitBeatGrid(y, sr, bpmHint) {
 
 /*
  * Which of two half-beat phases is the beat, and whether the grid is worth
- * writing at all. Both are small logistic models over what fitBeatGrid
- * measured, trained on the train half of the owner's library against
- * Rekordbox's grids and checked by five-fold cross-validation there
- * (tools/measure/measure_grid.mjs records the features; the fitting scripts
- * are described in the commit that introduced these numbers). They are
- * reported on the held-out half.
+ * writing at all. Small logistic models over what fitBeatGrid measured and
+ * what the two phases' bars look like (downbeat.js), fitted on the train half
+ * of the owner's library against Rekordbox's grids, variable-tempo tracks
+ * included, by tools/measure/grid_models.mjs from the features
+ * tools/measure/grid_features.mjs saves. Reported on the held-out half.
  *
- *   flip     features: each band's on/off share minus 0.5 (GRID_BANDS), and
- *            log of the averaged kick's on/off peak ratio / 5. Positive score:
- *            the beat is half a beat later than the kick fit says. Right on
- *            84.9% of tracks where it matters, against 83.7% for never
- *            flipping -- a small gain, kept because it is free.
- *   confidence  features: |flip score| / 3, the flip features' magnitudes,
- *            median local contrast / 5, drifting stretches / 3, the tempo
- *            detector's "dynamic" verdict, share of stretches with a clear
- *            beat, (BPM - 130) / 30. Probability that the grid matches
- *            Rekordbox's within 70 ms on at least 80% of beats.
+ *   kick flip   features: each band's on/off share minus 0.5 (GRID_BANDS),
+ *            and log of the averaged kick's on/off peak ratio / 5. Positive:
+ *            the beat is half a beat later than the kick fit says. On its own
+ *            right on 85.2% of tracks where one phase is good and the other
+ *            not, about what never flipping gets (83.7% on an earlier count).
+ *   bar switch  whether to move the kick flip's grid by half a beat after
+ *            all: -|kick flip score|, then barContrast (downbeat.js) between
+ *            that grid and the one half a beat later -- the beat is where the
+ *            bars are. Right on 88.8% where it matters; good grids among all
+ *            74.3% -> 77.3% (McNemar 97 fixed, 28 broken).
+ *   confidence  features: |kick flip score| / 3, the flip features'
+ *            magnitudes, median local contrast / 5, drifting stretches / 3,
+ *            the tempo detector's "dynamic" verdict, share of stretches with
+ *            a clear beat, (BPM - 130) / 30, |bar switch score| / 3, log(1 +
+ *            the tempo detector's range in BPM), "dynamic" again. Probability
+ *            that the grid matches Rekordbox's within 70 ms on at least 80%
+ *            of beats. A moving tempo is evidence here, not a veto: the old
+ *            veto withheld as many good grids as bad ones.
  */
 const GRID_FLIP_WEIGHTS = [-0.681, -0.843, -0.269, -1.943, -0.812, -0.686, -1.114, -0.263, 1.502, -3.438];
 const GRID_FLIP_BIAS = -0.555;
-const GRID_CONFIDENCE_WEIGHTS = [2.421, -0.802, -0.559, -1.043, -0.879, -0.211, 0.401, 0.227, -0.407, -0.142, -0.255, 0.37, -1.031, -0.258, 0.947, 0.129];
-const GRID_CONFIDENCE_BIAS = -0.784;
-// On the train half: grids for about half the tracks, about 85% of them good.
-const GRID_MIN_CONFIDENCE = 0.75;
+const GRID_SWITCH_WEIGHTS = [0.938, 0.496, -0.449, -0.751, -0.166, -0.21, 1.019, 0.329, 0.495, 0.602, 0.698, 1.024];
+const GRID_SWITCH_BIAS = 0.371;
+const GRID_CONFIDENCE_WEIGHTS = [0.276, -0.895, -0.342, -0.956, -1.234, -0.322, 0.447, 0.294, -0.573, -0.175, -0.233, 0.574, -1.104, -0.135, 0.923, 0.019, 1.689, -0.068, -0.135];
+const GRID_CONFIDENCE_BIAS = -0.352;
+// The lowest threshold that keeps the train half's accuracy where the
+// previous models had it (88.1%). Held-out half: grids for 49.8% of tracks
+// against 47.2%, 90.0% of them good against 89.5%.
+const GRID_MIN_CONFIDENCE = 0.82;
 // The onset envelope fires about this much before the beat Rekordbox marks,
 // measured on WAV files, where no MP3 decoder offset is involved.
 const GRID_LATENCY_SEC = 0.005;
 
 /*
- * The beat grid for a track, ready to show or write.
- *
- * Returns { bpm, firstBeat, confidence, place, reason } or null. firstBeat is
- * in seconds on the decoded audio's own timeline (what the browser and
- * ffmpeg both produce); writing it for another program needs that program's
- * offset (gridOffsetFor in tags.js). `place` is false, with a reason, when the grid
- * should not be written: "dynamic" for a tempo that moves, "unsure" when the
- * confidence model is below GRID_MIN_CONFIDENCE.
+ * The confidence model's base inputs and the kick flip score, from
+ * fitBeatGrid's output alone, so the measurement tools can refit them from
+ * saved fits.
  */
-function estimateBeatGrid(y, sr, bpmHint, tempoMode) {
-  const fit = fitBeatGrid(y, sr, bpmHint);
-  if (!fit) return null;
+function gridEvidence(fit, tempoMode) {
   const x = [...fit.halfBeat.map((v) => v - 0.5), Math.log(Math.max(1e-6, fit.kick.peakRatio || 1e-6)) / 5];
   const z = GRID_FLIP_BIAS + GRID_FLIP_WEIGHTS.reduce((acc, w, j) => acc + w * x[j], 0);
-  const flip = z > 0;
-
   const period = fit.period * 1000;
   const contrasts = fit.local.map(([, c]) => c).sort((a, b) => a - b);
   const medianContrast = contrasts.length ? contrasts[contrasts.length >> 1] : 0;
@@ -372,13 +374,59 @@ function estimateBeatGrid(y, sr, bpmHint, tempoMode) {
   const drifting = clear.filter(([d]) => Math.abs(d) > 40 && Math.abs(d) < period / 2 - 40).length;
   const features = [Math.abs(z) / 3, ...x.map(Math.abs), medianContrast / 5, drifting / 3,
     tempoMode === "dynamic" ? 1 : 0, clear.length / Math.max(1, fit.local.length), (fit.bpm - 130) / 30];
-  const c = GRID_CONFIDENCE_BIAS + GRID_CONFIDENCE_WEIGHTS.reduce((acc, w, j) => acc + w * features[j], 0);
-  const confidence = Math.round(1000 / (1 + Math.exp(-c))) / 1000;
+  return { x, z, features };
+}
 
-  let firstBeat = fit.firstBeat + (flip ? fit.period / 2 : 0) + GRID_LATENCY_SEC;
-  firstBeat = ((firstBeat % fit.period) + fit.period) % fit.period;
-  let reason = null;
-  if (tempoMode === "dynamic") reason = "dynamic";
-  else if (confidence < GRID_MIN_CONFIDENCE) reason = "unsure";
-  return { bpm: fit.bpm, firstBeat: Math.round(firstBeat * 10000) / 10000, confidence, place: reason === null, reason };
+const wrapPhase = (t, period) => ((t % period) + period) % period;
+
+// The first beat the kick flip picks, latency included, within one period.
+function kickFirstBeat(fit) {
+  const { z } = gridEvidence(fit, "constant");
+  return wrapPhase(fit.firstBeat + (z > 0 ? fit.period / 2 : 0) + GRID_LATENCY_SEC, fit.period);
+}
+
+/*
+ * The two decisions, from fitBeatGrid's output, the tempo analysis
+ * ({ mode, min, max }) and downbeatCandidates for the grid at kickFirstBeat
+ * (`here`) and half a beat later (`away`), either null when too short.
+ * Returns { switched, confidence, place, reason }: switched means the beat is
+ * half a beat after kickFirstBeat.
+ */
+function gridDecision(fit, tempo, here, away) {
+  const { z, features } = gridEvidence(fit, tempo.mode);
+  const s = [-Math.abs(z), ...barContrast(here, away)];
+  const k = GRID_SWITCH_BIAS + GRID_SWITCH_WEIGHTS.reduce((acc, w, j) => acc + w * s[j], 0);
+  const range = Math.max(0, (tempo.max || 0) - (tempo.min || 0));
+  const v = [...features, Math.abs(k) / 3, Math.log(1 + range), tempo.mode === "dynamic" ? 1 : 0];
+  const c = GRID_CONFIDENCE_BIAS + GRID_CONFIDENCE_WEIGHTS.reduce((acc, w, j) => acc + w * v[j], 0);
+  const confidence = Math.round(1000 / (1 + Math.exp(-c))) / 1000;
+  const place = confidence >= GRID_MIN_CONFIDENCE;
+  return { switched: k > 0, confidence, place, reason: place ? null : tempo.mode === "dynamic" ? "dynamic" : "unsure" };
+}
+
+/*
+ * The beat grid for a track, ready to show or write. `tempo` is analyzeTempo's
+ * result. Needs downbeat.js.
+ *
+ * Returns { bpm, firstBeat, downbeat, confidence, place, reason } or null.
+ * firstBeat is in seconds on the decoded audio's own timeline (what the
+ * browser and ffmpeg both produce); writing it for another program needs that
+ * program's offset (gridOffsetFor in tags.js). downbeat is which of the first
+ * four beats starts a bar (downbeat.js). `place` is false, with a reason,
+ * when the grid should not be written: "unsure" when the confidence model is
+ * below GRID_MIN_CONFIDENCE, "dynamic" when that is so and the tempo moves.
+ */
+function estimateBeatGrid(y, sr, bpmHint, tempo) {
+  const fit = fitBeatGrid(y, sr, bpmHint);
+  if (!fit) return null;
+  const frames = downbeatFrames(y, sr);
+  const bars = (t) => downbeatCandidates(beatSyncFeatures(y, sr, fit.bpm, t, frames));
+  const start = kickFirstBeat(fit);
+  const half = fit.period / 2;
+  const decision = gridDecision(fit, tempo, bars(start), bars(start + half));
+  const firstBeat = Math.round(wrapPhase(start + (decision.switched ? half : 0), fit.period) * 10000) / 10000;
+  return {
+    bpm: fit.bpm, firstBeat, downbeat: downbeatPhase(bars(firstBeat)).phase,
+    confidence: decision.confidence, place: decision.place, reason: decision.reason,
+  };
 }

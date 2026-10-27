@@ -119,8 +119,8 @@ is a record of what happened rather than live interface text.
 | `admin.html` | Review of genre corrections, admin role only |
 | `css/styles.css` | Design tokens and styling, dark and light. The landing and login page copy the same tokens inline; `tools/test/test_style.mjs` fails if they drift |
 | `js/dsp.js` | FFT, onset/tempogram BPM, CQT chroma key (the fallback) |
-| `js/beatgrid.js` | Beat grid: kick-band onset envelope, comb fit to 0.01 BPM, half-beat and confidence models |
-| `js/downbeat.js` | Which beat starts the bar: beat-synchronous band energy and chroma change, softmax over the four phases |
+| `js/beatgrid.js` | Beat grid: kick-band onset envelope, comb fit to 0.01 BPM, half-beat choice (kick, then bars) and confidence models |
+| `js/downbeat.js` | Which beat starts the bar: beat-synchronous band energy and chroma change, softmax over the four phases; bar contrast between half-beat grids for beatgrid.js |
 | `js/keycnn.js` | Key network: madmom's spectrogram and Korzeniowski & Widmer's CNN, ported for inference; weights in `data/key_cnn.bin` (CC BY-NC-SA 4.0) |
 | `js/loudness.js` | ITU-R BS.1770 loudness, true peak, limiter, silence trim, resampler, WAV/MP3 encoders |
 | `js/tags.js` | Reads ID3v2, Vorbis comments and MP4 ilst; writes ID3v2.4 into MP3 and WAV |
@@ -261,11 +261,25 @@ quarter of the time.
 
 **Half a beat out** remains the main failure — 15% of grids on the train half,
 in every genre. A small logistic model over eight frequency bands' on/off
-evidence picks the phase; it gains little (84.9% against 83.7% for never
-flipping) and is kept because it is free. A second model scores confidence;
-below 0.75 the grid is withheld as "the beat is ambiguous". Averaging the kick
-across all beats to locate its onset more precisely did not narrow the spread
-and was dropped.
+evidence picks the phase first; on its own it gains little over never
+flipping. Then the bars get a say: a bar starts on a beat, so of the two
+half-beat grids the one on the beat should show sharper bar boundaries
+(`barContrast` in `js/downbeat.js`, the same per-phase features the downbeat
+uses). A second logistic model over the first one's certainty and that
+contrast decides whether to move the grid by half a beat. On held-out tracks
+where one phase is good and the other not, it is right on 88.8% against 85.2%;
+over every grid, good ones go from 74.3% to 77.3% (McNemar 97 fixed, 28
+broken, χ² = 37). Bar evidence alone, without the kick model, gained nothing.
+
+A third model scores confidence from the fit, the half-beat choice's certainty
+and the tempo detector's range; below 0.82 the grid is withheld as "the beat
+is ambiguous". The threshold is the lowest that keeps the train half's
+accuracy where the previous models had it; on the held-out half grids are
+written for 49.8% of tracks against 47.2%, 90.0% of them good against 89.5%.
+The models are fitted by `tools/measure/grid_models.mjs` from features
+`tools/measure/grid_features.mjs` saves, and that script also scores the
+shipped `gridDecision` on the same rows. Averaging the kick across all beats
+to locate its onset more precisely did not narrow the spread and was dropped.
 
 **Timelines.** The browser and ffmpeg decode MP3s sample-identically (checked
 on all three header types, 44.1 and 48 kHz). Rekordbox and Serato do not trim
@@ -276,19 +290,28 @@ depending on the file. Without a LAME header all three agree within ~5 ms.
 
 **Held-out half** (2057 one-tempo tracks; nothing was chosen on them):
 
-| | Before: whole BPM, best phase | Every grid | Grids it writes (47%) |
+| | Before: whole BPM, best phase | Every grid | Grids it writes (49%) |
 |---|---|---|---|
-| F-measure ≥ 0.8 vs Rekordbox | 54.6% | 74.3% | **89.8%** |
-| BPM within 0.05 of Rekordbox | 75.9% | 89.2% | 91.9% |
-| Off by > 70 ms at the end | 37.2% | 21.7% | 10.1% |
+| F-measure ≥ 0.8 vs Rekordbox | 54.6% | 77.5% | **90.4%** |
+| BPM within 0.05 of Rekordbox | 75.9% | 89.2% | 91.2% |
+| Off by > 70 ms at the end | 37.2% | 18.4% | 9.6% |
 
-McNemar on F ≥ 0.8, before against every grid: 562 fixed, 157 broken, χ² = 227.
-Against the Serato grids in held-out files, the grids it writes are within
-20 ms in 77.9% and within 70 ms in 91.5%, median 8.9 ms.
+McNemar on F ≥ 0.8, before against every grid: 584 fixed, 113 broken, χ² = 317.
+Without the bar evidence these were 74.3% and 89.8% of 47% written. Tempo and
+grid take a median 4.8 s per track in Node, 0.7 s more than without it: the
+bar features now run on every track, not only those given a grid.
+Against the Serato grids in held-out files, the grids it wrote before the bar
+evidence were within 20 ms in 77.9% and within 70 ms in 91.5%, median 8.9 ms.
 
-**Not solved.** The "no grid" verdict does not pick out tempo-changing tracks:
-it withholds 48% of those and 53% of one-tempo tracks alike; what it does is
-withhold doubtful grids.
+**Moving tempo.** The tempo detector's "dynamic" verdict used to withhold a
+grid outright. It withheld good grids about as often as bad ones, so it is now
+one input of the confidence model, and the "tempo moves" reason is given only
+when that model withholds the grid as well. Of the 188 held-out tracks whose
+Rekordbox grid changes tempo, 103 get a grid (97 before), 89 of them good.
+
+**Not solved.** Confidence separates good grids from bad ones only so far (AUC
+0.77 on the held-out half): writing more costs accuracy — at a threshold of
+0.75, 65.8% of tracks and 87.8% good; at 0.70, 74.3% and 86.6%.
 
 **Bars.** `js/downbeat.js` picks which of the first four beats starts a bar:
 per beat, eight band energies and a chroma; per candidate phase, how much they

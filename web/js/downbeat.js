@@ -31,14 +31,14 @@ const DOWNBEAT_HOP = 1024;
 const DOWNBEAT_BANDS = [[30, 90], [90, 180], [180, 360], [360, 720], [720, 1440], [1440, 2880], [2880, 5760], [5760, 11520]];
 const DOWNBEAT_CHROMA_HZ = [110, 1760];
 const DOWNBEAT_MIN_BEATS = 24;
+// Features per candidate phase (downbeatCandidates).
+const DOWNBEAT_FEATURES = 10;
 
 /*
- * Per-beat band energies (log) and chroma (unit length) for the beats of a
- * grid, plus the kick and top-band energy in the first quarter of each beat.
- * Beat k spans firstBeat + k*period to the next; only whole beats inside the
- * audio are kept.
+ * Band energies and chroma per STFT frame: what beatSyncFeatures averages
+ * over beats. Computed once per track and shared by every grid tried on it.
  */
-function beatSyncFeatures(y, sr, bpm, firstBeat) {
+function downbeatFrames(y, sr) {
   const n = DOWNBEAT_FFT;
   const frames = Math.floor(y.length / DOWNBEAT_HOP);
   const fft = getFFT(n);
@@ -74,6 +74,19 @@ function beatSyncFeatures(y, sr, bpm, firstBeat) {
     bands.push(b);
     chroma.push(c);
   }
+  return { bands, chroma };
+}
+
+/*
+ * Per-beat band energies (log) and chroma (unit length) for the beats of a
+ * grid, plus the kick and top-band energy in the first quarter of each beat.
+ * Beat k spans firstBeat + k*period to the next; only whole beats inside the
+ * audio are kept. `frames` is downbeatFrames(y, sr), passed in when several
+ * grids are tried on one track.
+ */
+function beatSyncFeatures(y, sr, bpm, firstBeat, frames = downbeatFrames(y, sr)) {
+  const { bands, chroma } = frames;
+  const count = bands.length;
 
   // Frame t covers the hop starting at t * DOWNBEAT_HOP samples.
   const frameAt = (sec) => Math.floor((sec * sr) / DOWNBEAT_HOP);
@@ -82,7 +95,7 @@ function beatSyncFeatures(y, sr, bpm, firstBeat) {
   for (let k = 0; ; k++) {
     const from = frameAt(firstBeat + k * period);
     const to = frameAt(firstBeat + (k + 1) * period);
-    if (to > frames || to <= from) break;
+    if (to > count || to <= from) break;
     const quarter = Math.max(from + 1, frameAt(firstBeat + (k + 0.25) * period));
     const e = new Float64Array(DOWNBEAT_BANDS.length);
     const c = new Float64Array(12);
@@ -164,18 +177,47 @@ function downbeatCandidates(beats) {
 // broken; 85.2% against 69.1% over every grid). About 0.6 s per track.
 const DOWNBEAT_WEIGHTS = [0.412, 2.127, -0.2, 2.294, 1.747, -0.798, -0.134, 0.706, 0.85, -0.531, 1.308];
 
+const downbeatScores = (candidates, weights) =>
+  candidates.map((x, p) => x.reduce((s, v, j) => s + weights[j] * v, 0) + (p === 0 ? weights[x.length] : 0));
+
 /*
- * Which of the grid's first four beats is a downbeat: { phase, probs }, phase
- * 0 meaning the first beat. Falls back to phase 0 -- what a grid without this
- * says -- when there is too little audio or no fitted model.
+ * Which of the grid's first four beats is a downbeat, from downbeatCandidates:
+ * { phase, probs }, phase 0 meaning the first beat. Falls back to phase 0 --
+ * what a grid without this says -- when there is too little audio or no
+ * fitted model.
  */
-function estimateDownbeat(y, sr, bpm, firstBeat, weights = DOWNBEAT_WEIGHTS) {
-  const candidates = weights ? downbeatCandidates(beatSyncFeatures(y, sr, bpm, firstBeat)) : null;
-  if (!candidates) return { phase: 0, probs: [1, 0, 0, 0] };
-  const scores = candidates.map((x, p) => x.reduce((s, v, j) => s + weights[j] * v, 0) + (p === 0 ? weights[x.length] : 0));
+function downbeatPhase(candidates, weights = DOWNBEAT_WEIGHTS) {
+  if (!candidates || !weights) return { phase: 0, probs: [1, 0, 0, 0] };
+  const scores = downbeatScores(candidates, weights);
   const max = Math.max(...scores);
   const exps = scores.map((s) => Math.exp(s - max));
   const total = exps.reduce((a, b) => a + b, 0);
   const probs = exps.map((e) => Math.round((1000 * e) / total) / 1000);
   return { phase: scores.indexOf(max), probs };
+}
+
+function estimateDownbeat(y, sr, bpm, firstBeat, weights = DOWNBEAT_WEIGHTS) {
+  return downbeatPhase(weights ? downbeatCandidates(beatSyncFeatures(y, sr, bpm, firstBeat)) : null, weights);
+}
+
+/*
+ * How much more bar-like the grid half a beat later is than this one: a bar
+ * starts on a beat, so on the off-beat grid no phase should look like a
+ * downbeat as clearly. [best bar score there minus here, then per feature the
+ * largest value over the four phases there minus here]; zeros when either is
+ * too short to compare. Input to the half-beat choice in beatgrid.js.
+ *
+ * Clamped to a little beyond what the library shows (score within 4.6, each
+ * feature within 1.3, over 4350 tracks): a band with next to no energy -- no
+ * treble at all -- gives ratios of rounding noise, and those must not move a
+ * grid on their own.
+ */
+const BAR_CONTRAST_MAX = [5, 1.5];
+function barContrast(here, away, weights = DOWNBEAT_WEIGHTS) {
+  if (!here || !away) return new Array(DOWNBEAT_FEATURES + 1).fill(0);
+  const best = (c) => Math.max(...downbeatScores(c, weights));
+  const top = (c, j) => Math.max(...c.map((x) => x[j]));
+  const clamp = (v, max) => Math.max(-max, Math.min(max, v));
+  return [clamp(best(away) - best(here), BAR_CONTRAST_MAX[0]),
+    ...here[0].map((_, j) => clamp(top(away, j) - top(here, j), BAR_CONTRAST_MAX[1]))];
 }

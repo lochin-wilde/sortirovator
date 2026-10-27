@@ -137,7 +137,8 @@ export function scoreGrid(refMs, bpm, firstBeatSec, offsetMs = 0) {
 
 if (!isMainThread) {
   const dsp = loadDsp(["analyzeTempo", "onsetStrength", "fitBeatGrid", "estimateBeatGrid", "mp3HeaderKind", "gridOffsetFor", "id3v2Length", "bestPhase", "onsetPeaks", "ONSET_HOP"],
-    readFileSync(join(ROOT, "web/js/beatgrid.js"), "utf8") + readFileSync(join(ROOT, "web/js/tags.js"), "utf8"));
+    readFileSync(join(ROOT, "web/js/beatgrid.js"), "utf8") + readFileSync(join(ROOT, "web/js/downbeat.js"), "utf8")
+    + readFileSync(join(ROOT, "web/js/tags.js"), "utf8"));
   parentPort.on("message", (task) => {
     if (task === null) process.exit(0);
     try {
@@ -146,7 +147,7 @@ if (!isMainThread) {
       const started = performance.now();
       const tempo = dsp.analyzeTempo(y, RATE);
       const grid = tempo.bpm ? dsp.fitBeatGrid(y, RATE, tempo.bpm) : null;
-      const final = tempo.bpm ? dsp.estimateBeatGrid(y, RATE, tempo.bpm, tempo.mode) : null;
+      const final = tempo.bpm ? dsp.estimateBeatGrid(y, RATE, tempo.bpm, tempo) : null;
       // The whole ID3 tag has to be skipped to find the MP3 header, and cover
       // art can make the tag hundreds of kilobytes long.
       const head = new Uint8Array(readFileSync(task.file).subarray(0, 4 * 1024 * 1024));

@@ -6,7 +6,9 @@
  * measurement against Rekordbox does that -- but it can say whether the
  * arithmetic is right: a track built at a known tempo and phase must come
  * back at that tempo and phase, and an off-beat that is louder than the beat
- * in the treble must not pull the grid half a beat out.
+ * in the treble must not pull the grid half a beat out. The decisions on top
+ * (gridDecision) are checked for direction: sharper bars half a beat later
+ * move the grid there, and a moving tempo lowers the confidence.
  *
  *   node tools/test/test_beatgrid.mjs
  */
@@ -17,7 +19,8 @@ const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
 const dsp = new Function(readFileSync("web/js/dsp.js", "utf8") + readFileSync("web/js/beatgrid.js", "utf8")
-  + "return { fitBeatGrid, estimateBeatGrid, analyzeTempo, gridScore, onsetPeaks, GRID_LATENCY_SEC };")();
+  + readFileSync("web/js/downbeat.js", "utf8")
+  + "return { fitBeatGrid, estimateBeatGrid, gridDecision, analyzeTempo, gridScore, onsetPeaks, GRID_LATENCY_SEC };")();
 
 /* ---------- Measures ---------- */
 
@@ -75,15 +78,32 @@ for (const [bpm, first] of [[128.37, 0.215], [174.0, 0.05], [122.5, 0.4]]) {
   check(`${bpm} BPM: сетка постоянная`, grid.constant === true);
 }
 {
-  const g = dsp.estimateBeatGrid(track(126, 0.3, 40), sr, 126, "constant");
+  const steady = { mode: "constant", min: 126, max: 126 };
+  const g = dsp.estimateBeatGrid(track(126, 0.3, 40), sr, 126, steady);
   const period = 60 / 126;
   let diff = ((g.firstBeat - 0.3 - dsp.GRID_LATENCY_SEC) % period + period) % period;
   if (diff > period / 2) diff -= period;
   check(`итоговая сетка: ${g.bpm} BPM, фаза в ${Math.round(diff * 1000)} мс от истинной (допуск 25)`, Math.abs(g.bpm - 126) <= 0.02 && Math.abs(diff) <= 0.025);
   check(`уверенность от 0 до 1 (${g.confidence}), решение и причина согласованы`,
     g.confidence >= 0 && g.confidence <= 1 && (g.place ? g.reason === null : ["unsure", "dynamic"].includes(g.reason)));
-  const moving = dsp.estimateBeatGrid(track(126, 0.3, 40), sr, 126, "dynamic");
-  check("темп помечен плавающим — сетка не ставится, причина dynamic", moving.place === false && moving.reason === "dynamic");
+  check(`начало такта — одна из четырёх долей (${g.downbeat})`, [0, 1, 2, 3].includes(g.downbeat));
+  const moving = dsp.estimateBeatGrid(track(126, 0.3, 40), sr, 126, { mode: "dynamic", min: 118, max: 134 });
+  check(`плавающий темп снижает уверенность (${moving.confidence} < ${g.confidence}), сетка та же`,
+    moving.confidence < g.confidence && moving.firstBeat === g.firstBeat);
+  check(`без сетки из-за плавающего темпа — причина dynamic (${moving.place}, ${moving.reason})`,
+    moving.place ? moving.reason === null : moving.reason === "dynamic");
+
+  // Bars: the same fit, with candidate features that make one of the two
+  // half-beat grids look like it has bars and the other flat.
+  const fit = dsp.fitBeatGrid(track(126, 0.3, 40), sr, 126);
+  const flat = [0, 1, 2, 3].map(() => new Array(10).fill(0));
+  const bars = [0, 1, 2, 3].map((p) => new Array(10).fill(p === 0 ? 1.5 : -0.5));
+  const there = dsp.gridDecision(fit, steady, flat, bars);
+  const here = dsp.gridDecision(fit, steady, bars, flat);
+  check(`такты яснее на полдоли позже — сетка переезжает туда (${there.switched}); яснее здесь — остаётся (${here.switched})`,
+    there.switched === true && here.switched === false);
+  const none = dsp.gridDecision(fit, steady, null, null);
+  check(`без признаков тактов — решает бочка, как раньше (${none.switched})`, none.switched === false);
 }
 check("тишина — нет сетки, а не выдумка", dsp.fitBeatGrid(new Float32Array(sr * 10), sr, 128) === null);
 check("без темпа — нет сетки", dsp.fitBeatGrid(track(128, 0.1, 10), sr, null) === null);
