@@ -287,10 +287,21 @@ Against the Serato grids in held-out files, the grids it writes are within
 
 **Not solved.** The "no grid" verdict does not pick out tempo-changing tracks:
 it withholds 48% of those and 53% of one-tempo tracks alike; what it does is
-withhold doubtful grids. Rekordbox XML `TEMPO` export is not built — it needs
-the absolute path the archive will be unpacked to, and must never apply to a
-track already in the collection. CDJs read grids from Rekordbox's analysis,
-which the page says.
+withhold doubtful grids. Bars are not found: the first beat is written as the
+first of a bar, which is where Rekordbox puts it for 69% of the tracks.
+
+**Rekordbox.** CDJs read grids from Rekordbox, not from the file, so the archive
+can carry a `rekordbox.xml` (`buildGridImport` in `js/rekordbox.js`): a TRACK
+per gridded MP3 or WAV with one `TEMPO` (Inizio, Bpm, Metro 4/4, Battito 1), in
+a playlist to drag into the collection. Rekordbox finds files by absolute path,
+which a browser cannot know, so the user types the folder the archive will be
+unpacked into and the page shows where the first track will be looked for. It
+is for new tracks only: Rekordbox matches an imported track by Location and
+replaces it, so the archive goes into a new folder, and any Location a loaded
+collection export already holds is left out. On held-out tracks the first beat
+it writes is within 20 ms of Rekordbox's own grid for 71%, within 50 ms for
+91%, median 12 ms — LAME MP3s are the spread, where Rekordbox's delay varies
+between about 17 and 45 ms from file to file.
 
 ### Key
 

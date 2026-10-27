@@ -171,6 +171,12 @@ main {
 }
 
 .toggle span { font-weight: 600; }
+.grid-rekordbox input[type="text"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.4rem;
+}
 .toggle em {
   display: block;
   margin-top: 0.25rem;

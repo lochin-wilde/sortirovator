@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.27.4";
+const APP_VERSION = "2026.10.27.5";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -116,6 +116,9 @@ const ui = {
   gridExport: el("grid-export"),
   gridSerato: el("grid-serato"),
   gridSummary: el("grid-summary"),
+  gridRekordbox: el("grid-rekordbox"),
+  gridRekordboxFolder: el("grid-rekordbox-folder"),
+  gridRekordboxNote: el("grid-rekordbox-note"),
   archiveSummary: el("archive-summary"),
   archiveTree: el("archive-tree"),
   tableHint: el("table-hint"),
@@ -657,6 +660,7 @@ async function processFile(file, options, slot) {
     keyMethod: null,
     grid: null,
     gridExport: null,
+    gridRekordbox: null,
     outputBlob: null,
     loudnessMode: null,
     measuredLufs: null,
@@ -894,6 +898,7 @@ async function processFile(file, options, slot) {
   outputBlob = await tagOutput(result, outputExtension, outputBlob);
   result.outputBlob = outputBlob;
   result.gridExport = await gridExportFor(result, outputExtension, outputBlob, audioIsOriginal);
+  result.gridRekordbox = await rekordboxGridFor(result, outputExtension, outputBlob, audioIsOriginal);
 
   const folder = options.steps.sort && result.genre
     ? genreFolderName(result.genre) + "/" : "";
@@ -1729,15 +1734,38 @@ async function gridExportFor(result, extension, blob, untouched) {
 }
 
 /*
+ * Whether a track can go into the Rekordbox XML, and what its file needs for
+ * the grid to land: the MP3 header kind and the ID3 tag's length, which move
+ * Rekordbox's timeline against the decoder's (gridOffsetFor in tags.js).
+ * WAV has no such offset, so unlike Serato's tag it can be listed.
+ */
+async function rekordboxGridFor(result, extension, blob, untouched) {
+  if (!result.grid) return { ok: false, reason: "none" };
+  if (!result.grid.place) return { ok: false, reason: result.grid.reason };
+  const ext = String(extension).toLowerCase();
+  if (ext !== ".mp3" && ext !== ".wav") return { ok: false, reason: "format" };
+  if (!untouched) return { ok: false, reason: "rendered" };
+  if (ext === ".wav") return { ok: true, reason: null, kind: "wav", tagBytes: 0 };
+  try {
+    const head = await readHead(blob);
+    return { ok: true, reason: null, kind: mp3HeaderKind(head), tagBytes: id3v2Length(head) };
+  } catch (e) {
+    return { ok: false, reason: "format" };
+  }
+}
+
+/*
  * Swap each eligible track's tag for one with a Serato grid while the archive
  * is packed, then put the originals back, so the switch can be turned off and
  * the archive downloaded again. Only the tag at the front is rebuilt; the rest
  * of the file is the same Blob, sliced, so no audio is read or copied.
  *
- * Returns a function that undoes the swap.
+ * Returns a function that undoes the swap. Its `tagBytes` maps each swapped
+ * path to its new tag's length, which the Rekordbox grid depends on.
  */
 async function applySeratoGrids() {
   const restore = [];
+  const tagBytes = new Map();
   for (const result of resultRows) {
     const exp = result.gridExport;
     if (!exp || !exp.ok || !result.outputBlob || !result.outputPath) continue;
@@ -1748,8 +1776,75 @@ async function applySeratoGrids() {
     if (!swap) continue;
     state.zip.file(result.outputPath, new Blob([swap.tag, blob.slice(swap.replaces)], { type: blob.type }));
     restore.push([result.outputPath, blob]);
+    tagBytes.set(result.outputPath, swap.tag.length);
   }
-  return () => { for (const [path, blob] of restore) state.zip.file(path, blob); };
+  const undo = () => { for (const [path, blob] of restore) state.zip.file(path, blob); };
+  undo.tagBytes = tagBytes;
+  return undo;
+}
+
+/*
+ * rekordbox.xml for the archive: every listed track at the path it will have
+ * once the archive is unpacked into the folder the user named. Tracks the
+ * loaded collection export already holds are left out -- importing one would
+ * replace that track, grid and cues included.
+ *
+ * Returns { xml, count, skipped }, or null when the folder is not a full path.
+ */
+function rekordboxGridXml(seratoTagBytes) {
+  const folder = archiveFolderPath(ui.gridRekordboxFolder.value);
+  if (!folder) return null;
+  const known = collectionLocations(rb.parsed);
+  const tracks = [];
+  let skipped = 0;
+  for (const result of resultRows) {
+    const exp = result.gridRekordbox;
+    if (!exp || !exp.ok || !result.outputPath) continue;
+    const location = trackLocation(folder, result.outputPath);
+    if (known.has(locationKey(location))) { skipped++; continue; }
+    const tagBytes = seratoTagBytes.has(result.outputPath) ? seratoTagBytes.get(result.outputPath) : exp.tagBytes;
+    const name = result.outputPath.slice(result.outputPath.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
+    tracks.push({
+      location,
+      name: result.feedbackTitle || name,
+      artist: result.feedbackArtist || "",
+      genre: result.genre && result.genre !== "Unknown" ? result.genre : "",
+      kind: exp.kind === "wav" ? "WAV File" : "MP3 File",
+      seconds: result.duration,
+      bpm: result.grid.bpm,
+      firstBeat: result.grid.firstBeat + gridOffsetFor("rekordbox", exp.kind, 44100, tagBytes),
+    });
+  }
+  return { xml: buildGridImport(tracks, RB_GRID_PLAYLIST), count: tracks.length, skipped };
+}
+
+const RB_GRID_XML = "rekordbox.xml";
+// Named in the import instructions, so it is not translated.
+const RB_GRID_PLAYLIST = "Музыкальный сортир — сетка";
+const RB_FOLDER_STORAGE_KEY = "sortirovator.archiveFolder";
+
+// The path Rekordbox will look for the first listed track under, shown as the
+// user types so a wrong folder is visible before anything is downloaded.
+function renderRekordboxNote() {
+  if (!ui.gridRekordboxNote) return;
+  // rekordbox.js is loaded on demand; the note waits for it rather than
+  // throwing and taking the archive preview down with it.
+  if (typeof archiveFolderPath === "undefined") {
+    ensureRekordboxLibrary().then(renderRekordboxNote, () => {});
+    return;
+  }
+  const first = resultRows.find((r) => r.gridRekordbox && r.gridRekordbox.ok && r.outputPath);
+  const ready = resultRows.filter((r) => r.gridRekordbox && r.gridRekordbox.ok && r.outputPath).length;
+  const folder = archiveFolderPath(ui.gridRekordboxFolder.value);
+  ui.gridRekordbox.disabled = !folder || ready === 0;
+  if (!folder) {
+    ui.gridRekordbox.checked = false;
+    ui.gridRekordboxNote.textContent = ui.gridRekordboxFolder.value.trim()
+      ? t("grid.rb.badFolder") : t("grid.rb.needFolder");
+    return;
+  }
+  ui.gridRekordboxNote.textContent = t("grid.rb.ready", { count: ready })
+    + (first ? " " + t("grid.rb.example", { path: folder.replace(/\/$/, "") + "/" + first.outputPath }) : "");
 }
 
 function renderGridExport() {
@@ -1765,6 +1860,7 @@ function renderGridExport() {
   ui.gridSummary.textContent = t("grid.summary", { ready: count(null), total: rows.length })
     + (why.length ? " " + t("grid.without", { list: why.join(", ") }) : "");
   ui.gridExport.hidden = false;
+  renderRekordboxNote();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1908,14 +2004,23 @@ async function downloadZip() {
   const previousLabel = ui.download.textContent;
   ui.download.textContent = t("msg.packing");
   try {
-    const restore = ui.gridSerato && ui.gridSerato.checked ? await applySeratoGrids() : () => {};
+    const restore = ui.gridSerato && ui.gridSerato.checked ? await applySeratoGrids() : Object.assign(() => {}, { tagBytes: new Map() });
     let blob;
     try {
+      if (ui.gridRekordbox && ui.gridRekordbox.checked) {
+        await ensureRekordboxLibrary();
+        const built = rekordboxGridXml(restore.tagBytes);
+        if (built) {
+          state.zip.file(RB_GRID_XML, built.xml);
+          log(t("msg.rbGridWritten", { count: built.count, skipped: built.skipped }));
+        }
+      }
       blob = await state.zip.generateAsync({ type: "blob", compression: "STORE" }, (meta) => {
         ui.download.textContent = t("msg.packingPercent", { percent: Math.round(meta.percent) });
       });
     } finally {
       restore();
+      state.zip.remove(RB_GRID_XML);
     }
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2060,6 +2165,20 @@ ui.cancel.addEventListener("click", () => {
 });
 
 ui.download.addEventListener("click", downloadZip);
+
+// Remembered between visits: the archive usually goes to the same place.
+try {
+  const savedFolder = localStorage.getItem(RB_FOLDER_STORAGE_KEY);
+  if (savedFolder) ui.gridRekordboxFolder.value = savedFolder;
+} catch (e) { /* private browsing blocks storage */ }
+ui.gridRekordboxFolder.addEventListener("input", () => {
+  renderRekordboxNote();
+  try {
+    const value = ui.gridRekordboxFolder.value.trim();
+    if (value) localStorage.setItem(RB_FOLDER_STORAGE_KEY, value);
+    else localStorage.removeItem(RB_FOLDER_STORAGE_KEY);
+  } catch (e) { /* ignore */ }
+});
 ui.reset.addEventListener("click", resetBatch);
 
 // The Last.fm key is the single biggest genre-accuracy win, so remember it

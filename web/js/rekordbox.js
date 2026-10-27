@@ -249,3 +249,103 @@ function lookupNames(attrs, split) {
   }
   return { artist, title };
 }
+
+/* ------------------------------------------------------------------ */
+/* Beat grids for new tracks                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * An XML that brings the archive's tracks into Rekordbox with the grid this
+ * app fitted, so they reach a USB stick -- and the CDJs -- already gridded.
+ *
+ * Only for tracks the collection does not have. Rekordbox matches an imported
+ * track to its collection by Location, and the header above explains what an
+ * import does to a track it matches: replaces it. The archive is unpacked into
+ * a folder the collection has not seen, so every Location here is new; the page
+ * also drops any Location a loaded collection export already holds.
+ *
+ * Format as pyrekordbox documents Rekordbox's own XML: a TRACK per file with a
+ * file://localhost URI, and one TEMPO child -- Inizio in seconds, Bpm, Metro,
+ * and Battito, the first beat's place in the bar. The app does not find bars,
+ * so Battito is 1; measured against Rekordbox's grids that is the right bar
+ * position for 69% of the tracks given a grid.
+ */
+
+/*
+ * The folder the archive will be unpacked into, typed by the user, as the
+ * absolute path Rekordbox will look for files under -- or null if it is not
+ * one. A browser cannot see where a download ends up, so this is the one fact
+ * the page has to be told. "~" is refused rather than guessed at: the page
+ * does not know the home folder either.
+ */
+function archiveFolderPath(text) {
+  let path = String(text || "").trim().replace(/^["']|["']$/g, "");
+  if (/^[A-Za-z]:[\\/]/.test(path)) path = path.replace(/\\/g, "/");
+  else if (!path.startsWith("/")) return null;
+  path = path.replace(/\/+$/, "");
+  return path === "" ? "/" : path;
+}
+
+// file://localhost URI for `relative` (the path inside the archive) under
+// `folder` (from archiveFolderPath). Each segment is percent-encoded, so
+// spaces, "&", "#" and Cyrillic survive; a Windows drive letter keeps its
+// colon.
+function trackLocation(folder, relative) {
+  const segments = (folder.replace(/^\//, "") + "/" + relative).split("/").filter((s) => s !== "");
+  const encoded = segments.map((s, i) => (i === 0 && /^[A-Za-z]:$/.test(s) ? s : encodeURIComponent(s)));
+  return "file://localhost/" + encoded.join("/");
+}
+
+/*
+ * tracks: [{ location, name, artist, genre, kind, seconds, bpm, firstBeat }],
+ * firstBeat already on Rekordbox's timeline (see gridOffsetFor in tags.js).
+ */
+function buildGridImport(tracks, playlistName) {
+  const attr = (name, value) => " " + name + '="' + xmlEscapeAttr(value) + '"';
+  const elements = tracks.map((track, i) => {
+    const period = 60 / track.bpm;
+    // A grid line before the start of the file means nothing to Rekordbox;
+    // the same grid one beat later does.
+    let first = track.firstBeat;
+    while (first < 0) first += period;
+    return "    <TRACK" + attr("TrackID", i + 1)
+      + attr("Name", track.name || "") + attr("Artist", track.artist || "")
+      + (track.genre ? attr("Genre", track.genre) : "")
+      + attr("Kind", track.kind)
+      + (Number.isFinite(track.seconds) ? attr("TotalTime", Math.round(track.seconds)) : "")
+      + attr("AverageBpm", track.bpm.toFixed(2))
+      + attr("Location", track.location) + ">\n"
+      + '      <TEMPO Inizio="' + first.toFixed(3) + '" Bpm="' + track.bpm.toFixed(2)
+      + '" Metro="4/4" Battito="1"/>\n'
+      + "    </TRACK>";
+  });
+  return '<?xml version="1.0" encoding="UTF-8"?>\n\n'
+    + '<DJ_PLAYLISTS Version="1.0.0">\n'
+    + '  <PRODUCT Name="Sortirovator" Version="" Company=""/>\n'
+    + '  <COLLECTION Entries="' + tracks.length + '">\n'
+    + elements.join("\n") + (tracks.length ? "\n" : "")
+    + "  </COLLECTION>\n"
+    + "  <PLAYLISTS>\n"
+    + '    <NODE Type="0" Name="ROOT" Count="1">\n'
+    + '      <NODE Name="' + xmlEscapeAttr(playlistName) + '" Type="1" KeyType="0" Entries="'
+    + tracks.length + '">\n'
+    + tracks.map((_, i) => '        <TRACK Key="' + (i + 1) + '"/>').join("\n")
+    + (tracks.length ? "\n" : "")
+    + "      </NODE>\n"
+    + "    </NODE>\n"
+    + "  </PLAYLISTS>\n"
+    + "</DJ_PLAYLISTS>\n";
+}
+
+// Locations a collection export already holds, decoded so that two spellings
+// of one path -- "%20" or a space, "file://localhost//Volumes" or "/Volumes"
+// -- compare equal.
+function locationKey(location) {
+  let path = String(location || "").replace(/^file:\/\/localhost/i, "").replace(/^\/+(?=[A-Za-z]:\/)/, "");
+  try { path = decodeURIComponent(path); } catch (e) { /* keep it as written */ }
+  return path.replace(/^\/+/, "/").normalize("NFC").toLowerCase();
+}
+
+function collectionLocations(parsed) {
+  return new Set((parsed ? parsed.tracks : []).map((t) => locationKey(t.attrs.Location)));
+}
