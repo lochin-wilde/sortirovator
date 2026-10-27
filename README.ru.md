@@ -123,9 +123,11 @@ node tools/measure/measure_key.mjs --detector cnn   # ~30 мин; без фла�
 python3 tools/groundtruth/rekordbox_anlz.py --grids ground-truth/rekordbox_grids.json
 node tools/measure/measure_grid.mjs --half test     # ~20 мин, сетки против сеток Rekordbox
 node tools/measure/grid_features.mjs                 # ~50 мин, сохраняет, из чего решается сетка
-node tools/measure/grid_models.mjs                   # секунды, переобучает выбор полдоли и уверенность
+node tools/measure/grid_models.mjs                   # секунды, переобучает выбор по бочке
 node tools/measure/grid_tempo.mjs                    # ~75 мин, темп сетки: две минуты против всего трека
 node tools/measure/grid_tempo.mjs --rescore          # секунды, оценивает правила темпа по этой выгрузке
+node tools/measure/grid_halfbeat.mjs                 # ~1,5 ч, сохраняет форму доли и такты на обеих фазах полдоли
+node tools/measure/grid_halfbeat.mjs --fit           # ~4 мин, переобучает выбор полдоли и уверенность, оценивает отгружаемые
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 мин, упирается в сеть
 ```
 

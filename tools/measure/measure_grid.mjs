@@ -33,7 +33,7 @@
  * on the train half, never on the half it is reported on.
  */
 
-import { isMainThread, parentPort } from "node:worker_threads";
+import { isMainThread, parentPort, workerData } from "node:worker_threads";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -136,7 +136,9 @@ export function scoreGrid(refMs, bpm, firstBeatSec, offsetMs = 0) {
 /* Worker                                                              */
 /* ------------------------------------------------------------------ */
 
-if (!isMainThread) {
+// Only in its own workers: grid_tempo.mjs and grid_halfbeat.mjs import
+// scoreGrid, and a second handler there would analyse every track twice.
+if (!isMainThread && workerData?.script === fileURLToPath(import.meta.url)) {
   const dsp = loadDsp(["analyzeTempo", "onsetStrength", "fitBeatGrid", "estimateBeatGrid", "mp3HeaderKind", "gridOffsetFor", "id3v2Length", "bestPhase", "onsetPeaks", "ONSET_HOP", "GRID_TEMPO_RATE"],
     readFileSync(join(ROOT, "web/js/beatgrid.js"), "utf8") + readFileSync(join(ROOT, "web/js/downbeat.js"), "utf8")
     + readFileSync(join(ROOT, "web/js/tags.js"), "utf8"));

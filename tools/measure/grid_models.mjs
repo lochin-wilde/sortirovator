@@ -11,11 +11,12 @@
  *            Here: the same model with the bar evidence and the tempo range
  *            as inputs, and the "dynamic" verdict as one input among others.
  *
- * The models these experiments chose are in beatgrid.js (gridDecision); the
- * last section scores that code on the same rows, so the shipped numbers are
- * the ones printed here. "Before" is rebuilt from the fit with the earlier
- * weights below, so the comparison holds whatever estimateBeatGrid did when
- * the features were dumped.
+ * The kick flip in beatgrid.js (GRID_FLIP_WEIGHTS, gridEvidence) is still
+ * this script's. The phase and confidence models these experiments led to
+ * have since been refitted with the beat's shape by grid_halfbeat.mjs, which
+ * also scores the shipped gridDecision. "Before" is rebuilt from the fit with
+ * the earlier weights below, so the comparison holds whatever
+ * estimateBeatGrid did when the features were dumped.
  *
  * A grid is good when it matches Rekordbox's beats within 70 ms on at least
  * 80% of them (F-measure, as measure_grid.mjs). Rekordbox grids that change
@@ -62,7 +63,7 @@ function mcnemar(rows, a, b) {
 const pct = (k, n) => (n ? ((100 * k) / n).toFixed(1) + "%" : "-");
 
 function main() {
-  const dsp = loadDsp(["gridEvidence", "kickFirstBeat", "gridDecision", "DOWNBEAT_WEIGHTS"],
+  const dsp = loadDsp(["gridEvidence", "kickFirstBeat", "DOWNBEAT_WEIGHTS"],
     readFileSync(join(ROOT, "web/js/beatgrid.js"), "utf8") + readFileSync(join(ROOT, "web/js/downbeat.js"), "utf8"));
   const { results } = JSON.parse(readFileSync(arg("--in", join(ROOT, "ground-truth/grid_features.json")), "utf8"));
   const grids = JSON.parse(readFileSync(join(ROOT, "ground-truth/rekordbox_grids.json"), "utf8")).byName;
@@ -90,7 +91,7 @@ function main() {
     const confidence = 1 / (1 + Math.exp(-logit(BEFORE_CONFIDENCE, ev.features)));
     rows.push({
       half, graded: true, name: r.name, variable: Math.max(...tempos) - Math.min(...tempos) > 0.5,
-      place: confidence >= 0.75 && r.tempo.mode !== "dynamic", confidence, shipped: dsp.gridDecision(r.fit, r.tempo, r.onBeat, r.offBeat),
+      place: confidence >= 0.75 && r.tempo.mode !== "dynamic", confidence,
       goodNow: fNow >= GOOD_F, goodAlt: fAlt >= GOOD_F, z: ev.z, x: ev.x, features: ev.features,
       // Evidence that the half-beat phase *away from* final is the beat.
       barAway: -bar, barDiffsAway: barDiffs.map((v) => -v),
@@ -171,17 +172,6 @@ function main() {
   const v = test.filter((r) => r.graded && r.variable);
   console.log(`   tracks whose Rekordbox grid changes tempo (test ${v.length}): written before ${v.filter((r) => r.place).length}, new ${v.filter((r) => p(r) >= threshold).length}; good among new ones ${v.filter((r) => p(r) >= threshold && r.good).length}`);
 
-  /* ---------- 3. as shipped ---------- */
-
-  console.log("\n3. AS SHIPPED (beatgrid.js gridDecision on the same rows)");
-  for (const [label, part] of [["train", train], ["test", test]]) {
-    const shipped = part.map((r) => (r.graded ? { ...r, good: r.shipped.switched ? r.goodAlt : r.goodNow } : r));
-    report(`${label}: before`, part.map((r) => ({ ...r, good: r.goodNow })), (r) => r.place);
-    report(`${label}: shipped`, shipped, (r) => r.shipped.place);
-    const g = shipped.filter((r) => r.graded);
-    const m = mcnemar(g, (r) => r.goodNow, (r) => r.good);
-    console.log(`   ${label}: every grid good ${pct(g.filter((r) => r.goodNow).length, g.length)} -> ${pct(g.filter((r) => r.good).length, g.length)} (McNemar fixed ${m.fixed} broken ${m.broken} chi2 ${m.chi.toFixed(1)})`);
-  }
 }
 
 if (process.argv[1] && process.argv[1].endsWith("grid_models.mjs")) main();

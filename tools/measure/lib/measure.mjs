@@ -203,8 +203,10 @@ export function runPool(workerUrl, tasks, onResult) {
     let live = 0;
     for (let i = 0; i < Math.min(jobs, total); i++) {
       // Workers do not inherit the command line; options such as --patch
-      // have to be handed over or the workers silently ignore them.
-      const w = new Worker(workerUrl, { argv: process.argv.slice(2) });
+      // have to be handed over or the workers silently ignore them. The
+      // script path tells a measuring module imported by another one
+      // (measure_grid.mjs for scoreGrid) that the worker is not its own.
+      const w = new Worker(workerUrl, { argv: process.argv.slice(2), workerData: { script: workerUrl } });
       live++;
       const next = () => {
         const task = queue.shift();

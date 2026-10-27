@@ -58,12 +58,13 @@ const GRID_CHECK_MIN_CONTRAST = 2;
  * `hop` samples (GRID_HOP, an n = GRID_FFT window, unless given). Frames are
  * centred, so value t describes time t * hop / sr. GRID_BANDS[0] is the kick
  * band the grid is fitted on; the others only help decide which of two
- * half-beat phases is the beat.
+ * half-beat phases is the beat. With `withLevel`, returns { flux, level }:
+ * the envelopes and, per band, the mean log-compressed magnitude itself.
  */
 const GRID_BANDS = [[GRID_BASS_MIN_HZ, GRID_BASS_MAX_HZ],
   [30, 60], [60, 120], [120, 250], [250, 500], [500, 1000], [1000, 2000], [2000, 4000], [4000, 8000]];
 
-function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_HOP) {
+function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_HOP, withLevel = false) {
   const frames = Math.floor(y.length / hop) + 1;
   const ranges = bands.map(([from, to]) => [
     Math.max(1, Math.floor((from * n) / sr)),
@@ -77,6 +78,7 @@ function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_
   let prev = new Float64Array(top + 1);
   let cur = new Float64Array(top + 1);
   const envs = bands.map(() => new Float64Array(frames));
+  const levels = withLevel ? bands.map(() => new Float64Array(frames)) : null;
   for (let t = 0; t < frames; t++) {
     const start = t * hop - (n >> 1);
     for (let i = 0; i < n; i++) {
@@ -86,6 +88,14 @@ function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_
     }
     fft.transform(re, im, false);
     for (let k = 1; k <= top; k++) cur[k] = Math.log1p(100 * Math.hypot(re[k], im[k]));
+    if (levels) {
+      for (let b = 0; b < ranges.length; b++) {
+        const [lo, hi] = ranges[b];
+        let level = 0;
+        for (let k = lo; k <= hi; k++) level += cur[k];
+        levels[b][t] = level / (hi - lo + 1);
+      }
+    }
     if (t > 0) {
       for (let b = 0; b < ranges.length; b++) {
         const [lo, hi] = ranges[b];
@@ -96,7 +106,58 @@ function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_
     }
     const swap = prev; prev = cur; cur = swap;
   }
-  return envs;
+  return levels ? { flux: envs, level: levels } : envs;
+}
+
+/*
+ * The shape of the beat: an envelope averaged by where in the beat each frame
+ * falls, `bins` bins from `phase` on (both in frames). Hundreds of beats
+ * averaged show what happens on the beat and between -- the kick's click and
+ * the sidechain dip after it, an off-beat bass or hat, a clap on every other
+ * beat -- which tells the beat from the off-beat where the kick band alone
+ * cannot (gridDecision).
+ */
+const GRID_PROFILE_BINS = 16;
+function beatProfile(env, period, phase, bins = GRID_PROFILE_BINS) {
+  const sums = new Float64Array(bins);
+  const counts = new Float64Array(bins);
+  for (let f = 0; f < env.length; f++) {
+    let pos = ((f - phase) / period) % 1;
+    if (pos < 0) pos += 1;
+    const b = Math.min(bins - 1, Math.floor(pos * bins));
+    sums[b] += env[f];
+    counts[b]++;
+  }
+  return Array.from(sums, (s, b) => (counts[b] ? s / counts[b] : 0));
+}
+
+/*
+ * Evidence from the beat's shape ({ flux, level }, beatProfile per band) that
+ * the beat is half a beat later: per band, how much bigger each bin is half a
+ * beat on, after merging to `bins` bins. Flux as a log ratio to its mean,
+ * level (already a log) as a difference, so a loud band counts no more than a
+ * quiet one.
+ *
+ * Clamped near the library's 99.9th to 99.99th percentile (flux within 2,
+ * level within 4, over 4350 tracks): a band silent between hits gives flux
+ * ratios of -5, which a linear model would follow wherever they point.
+ */
+const GRID_SHAPE_BINS = 8;
+const GRID_SHAPE_MAX = { flux: 2, level: 4 };
+function beatShapeContrast(shape, bins = GRID_SHAPE_BINS) {
+  const out = [];
+  for (const kind of ["flux", "level"]) {
+    for (const p of shape[kind]) {
+      const k = p.length / bins;
+      const merged = [];
+      for (let b = 0; b < bins; b++) merged.push(p.slice(b * k, (b + 1) * k).reduce((a, v) => a + v, 0) / k);
+      const mean = merged.reduce((a, v) => a + v, 0) / bins;
+      const n = kind === "flux" ? merged.map((v) => Math.log((v + 0.01 * mean + 1e-9) / (mean + 1e-9))) : merged.map((v) => v - mean);
+      const max = GRID_SHAPE_MAX[kind];
+      for (let j = 0; j < bins / 2; j++) out.push(Math.max(-max, Math.min(max, n[j + bins / 2] - n[j])));
+    }
+  }
+  return out;
 }
 
 /*
@@ -230,15 +291,17 @@ function bestPhase(env, period, step, from, to, lo = 0, hi = period) {
  *   y, sr      the analysed audio (the app's first two minutes)
  *   bpmHint    the detected tempo; the grid stays within +-GRID_SEARCH_BPM
  *
- * Returns { bpm, firstBeat, deviationMs, constant } -- bpm to 0.01, firstBeat
- * in seconds (the earliest grid beat at or after 0), deviationMs the largest
- * local disagreement found, constant whether that stayed within tolerance --
- * or null when there is nothing to fit.
+ * Returns { bpm, firstBeat, deviationMs, constant, ... } -- bpm to 0.01,
+ * firstBeat in seconds (the earliest grid beat at or after 0), deviationMs the
+ * largest local disagreement found, constant whether that stayed within
+ * tolerance; local, halfBeat, kick and shape (beatProfile of each band's flux
+ * and level from firstBeat on) are the evidence gridDecision reads -- or null
+ * when there is nothing to fit.
  */
 function fitBeatGrid(y, sr, bpmHint) {
   const fps = sr / GRID_HOP;
   if (!(bpmHint > 0) || y.length < sr * 4) return null;
-  const envs = bandOnsetEnvelopes(y, sr);
+  const { flux: envs, level } = bandOnsetEnvelopes(y, sr, GRID_BANDS, GRID_FFT, GRID_HOP, true);
   const env = envs[0];
   const peaks = onsetPeaks(env, fps);
   let any = false;
@@ -300,6 +363,7 @@ function fitBeatGrid(y, sr, bpmHint) {
   });
 
   const kick = kickProfiles(y, sr, period / fps, phase / fps);
+  const shape = { flux: envs.map((e) => beatProfile(e, period, phase)), level: level.map((e) => beatProfile(e, period, phase)) };
 
   return {
     bpm,
@@ -310,6 +374,7 @@ function fitBeatGrid(y, sr, bpmHint) {
     local,
     halfBeat,
     kick,
+    shape,
     constant: deviationMs <= GRID_MAX_DEVIATION_MS,
   };
 }
@@ -363,40 +428,44 @@ function wholeTrackTempo(whole, sr, bpm) {
 
 /*
  * Which of two half-beat phases is the beat, and whether the grid is worth
- * writing at all. Small logistic models over what fitBeatGrid measured and
- * what the two phases' bars look like (downbeat.js), fitted on the train half
- * of the owner's library against Rekordbox's grids, variable-tempo tracks
- * included, by tools/measure/grid_models.mjs from the features
- * tools/measure/grid_features.mjs saves. Reported on the held-out half.
+ * writing at all. Small logistic models fitted on the train half of the
+ * owner's library against Rekordbox's grids, variable-tempo tracks included,
+ * and reported on the held-out half.
  *
  *   kick flip   features: each band's on/off share minus 0.5 (GRID_BANDS),
  *            and log of the averaged kick's on/off peak ratio / 5. Positive:
  *            the beat is half a beat later than the kick fit says. On its own
  *            right on 85.2% of tracks where one phase is good and the other
- *            not, about what never flipping gets (83.7% on an earlier count).
- *   bar switch  whether to move the kick flip's grid by half a beat after
- *            all: -|kick flip score|, then barContrast (downbeat.js) between
- *            that grid and the one half a beat later -- the beat is where the
- *            bars are. Right on 88.8% where it matters; good grids among all
- *            74.3% -> 77.3% (McNemar 97 fixed, 28 broken).
+ *            not. Fitted by tools/measure/grid_models.mjs; now one input of
+ *            the phase model.
+ *   phase    the kick flip score, barContrast (downbeat.js) between the
+ *            fit's grid and the one half a beat later -- the beat is where
+ *            the bars are -- and beatShapeContrast of the fit's beat shape.
+ *            Positive: the beat is half a beat later. Fitted by
+ *            tools/measure/grid_halfbeat.mjs.
  *   confidence  features: |kick flip score| / 3, the flip features'
  *            magnitudes, median local contrast / 5, drifting stretches / 3,
  *            the tempo detector's "dynamic" verdict, share of stretches with
- *            a clear beat, (BPM - 130) / 30, |bar switch score| / 3, log(1 +
- *            the tempo detector's range in BPM), "dynamic" again. Probability
+ *            a clear beat, (BPM - 130) / 30, |phase score| / 3, log(1 + the
+ *            tempo detector's range in BPM), "dynamic" again. Probability
  *            that the grid matches Rekordbox's within 70 ms on at least 80%
  *            of beats. A moving tempo is evidence here, not a veto: the old
- *            veto withheld as many good grids as bad ones.
+ *            veto withheld as many good grids as bad ones. Fitted by
+ *            tools/measure/grid_halfbeat.mjs.
  */
 const GRID_FLIP_WEIGHTS = [-0.681, -0.843, -0.269, -1.943, -0.812, -0.686, -1.114, -0.263, 1.502, -3.438];
 const GRID_FLIP_BIAS = -0.555;
-const GRID_SWITCH_WEIGHTS = [0.938, 0.496, -0.449, -0.751, -0.166, -0.21, 1.019, 0.329, 0.495, 0.602, 0.698, 1.024];
-const GRID_SWITCH_BIAS = 0.371;
-const GRID_CONFIDENCE_WEIGHTS = [0.276, -0.895, -0.342, -0.956, -1.234, -0.322, 0.447, 0.294, -0.573, -0.175, -0.233, 0.574, -1.104, -0.135, 0.923, 0.019, 1.689, -0.068, -0.135];
-const GRID_CONFIDENCE_BIAS = -0.352;
-// The lowest threshold that keeps the train half's accuracy where the
-// previous models had it (88.1%). Held-out half: grids for 49.8% of tracks
-// against 47.2%, 90.0% of them good against 89.5%.
+// z, barContrast (11), beatShapeContrast: flux then level, per band four
+// bins from the beat on.
+const GRID_PHASE_WEIGHTS = [0.09, 0.161, 0, -0.216, 0.276, -1.236, 1.132, 0.278, -0.135, 1.237, 0.615, 0.097, 0.247, 0.751, -0.612, -0.505, 0.405, 0.099, 0.006, -0.247, 0.197, 0.08, -0.833, 0.014, 0.249, 0.739, 0.164, -1.181, 0.84, 1.541, -2.225, -0.994, 1.566, 1.177, -0.706, -1.59, 0.469, 0.037, -3, -1.309, 0.335, 0.423, 1.022, -1.134, -0.284, -1.362, -0.311, 0.207, 0.021, -0.063, -0.1, -0.081, 0.205, 0.055, -0.012, -0.089, -0.017, -0.111, -0.096, -0.15, 0.149, -0.293, -0.392, -0.193, 0.122, -0.912, -0.197, -0.386, 0.519, -0.469, 0.492, -0.194, 0.355, -0.553, -0.236, -0.54, 0.372, -0.213, -0.081, 0.033, 0.099, 0.067, -0.306, 0.145];
+const GRID_PHASE_BIAS = -0.081;
+const GRID_CONFIDENCE_WEIGHTS = [0.465, -0.907, -0.486, -0.87, -0.947, -0.398, 0.168, -0.014, -0.821, -0.03, -0.032, 0.277, -1.263, -0.181, 0.977, 0.013, 2.088, 0.008, -0.181];
+const GRID_CONFIDENCE_BIAS = -0.386;
+// Kept where it was. The rule used before -- the lowest threshold that keeps
+// the train half's accuracy (0.76 here) -- wrote grids for 73.8% of the
+// held-out half but only 88.5% of them good; the owner prefers fewer wrong
+// grids. At 0.82: grids for 60.7% of the held-out half against 49.8%, 90.5%
+// of them good against 90.7%.
 const GRID_MIN_CONFIDENCE = 0.82;
 // The onset envelope fires about this much before the beat Rekordbox marks,
 // measured on WAV files, where no MP3 decoder offset is involved.
@@ -422,7 +491,8 @@ function gridEvidence(fit, tempoMode) {
 
 const wrapPhase = (t, period) => ((t % period) + period) % period;
 
-// The first beat the kick flip picks, latency included, within one period.
+// The first beat the kick flip alone picks, latency included, within one
+// period: what tools/measure/grid_features.mjs dumps bars for.
 function kickFirstBeat(fit) {
   const { z } = gridEvidence(fit, "constant");
   return wrapPhase(fit.firstBeat + (z > 0 ? fit.period / 2 : 0) + GRID_LATENCY_SEC, fit.period);
@@ -430,15 +500,15 @@ function kickFirstBeat(fit) {
 
 /*
  * The two decisions, from fitBeatGrid's output, the tempo analysis
- * ({ mode, min, max }) and downbeatCandidates for the grid at kickFirstBeat
- * (`here`) and half a beat later (`away`), either null when too short.
- * Returns { switched, confidence, place, reason }: switched means the beat is
- * half a beat after kickFirstBeat.
+ * ({ mode, min, max }) and downbeatCandidates for the fit's grid (`here`) and
+ * the one half a beat later (`away`), either null when too short. Returns
+ * { switched, confidence, place, reason }: switched means the beat is half a
+ * beat after the fit's firstBeat.
  */
 function gridDecision(fit, tempo, here, away) {
   const { z, features } = gridEvidence(fit, tempo.mode);
-  const s = [-Math.abs(z), ...barContrast(here, away)];
-  const k = GRID_SWITCH_BIAS + GRID_SWITCH_WEIGHTS.reduce((acc, w, j) => acc + w * s[j], 0);
+  const s = [z, ...barContrast(here, away), ...beatShapeContrast(fit.shape)];
+  const k = GRID_PHASE_BIAS + GRID_PHASE_WEIGHTS.reduce((acc, w, j) => acc + w * s[j], 0);
   const range = Math.max(0, (tempo.max || 0) - (tempo.min || 0));
   const v = [...features, Math.abs(k) / 3, Math.log(1 + range), tempo.mode === "dynamic" ? 1 : 0];
   const c = GRID_CONFIDENCE_BIAS + GRID_CONFIDENCE_WEIGHTS.reduce((acc, w, j) => acc + w * v[j], 0);
@@ -467,11 +537,11 @@ function estimateBeatGrid(y, sr, bpmHint, tempo, whole = null, wholeRate = GRID_
   if (!fit) return null;
   const frames = downbeatFrames(y, sr);
   const bars = (t) => downbeatCandidates(beatSyncFeatures(y, sr, fit.bpm, t, frames));
-  const start = kickFirstBeat(fit);
   const half = fit.period / 2;
-  const decision = gridDecision(fit, tempo, bars(start), bars(start + half));
+  const decision = gridDecision(fit, tempo, bars(fit.firstBeat), bars(fit.firstBeat + half));
   const bpm = whole && whole.length / wholeRate > y.length / sr + 1 ? wholeTrackTempo(whole, wholeRate, fit.bpm) : fit.bpm;
-  const firstBeat = Math.round(wrapPhase(start + (decision.switched ? half : 0), 60 / bpm) * 10000) / 10000;
+  const start = fit.firstBeat + GRID_LATENCY_SEC + (decision.switched ? half : 0);
+  const firstBeat = Math.round(wrapPhase(start, 60 / bpm) * 10000) / 10000;
   return {
     bpm, firstBeat, downbeat: downbeatPhase(bars(firstBeat)).phase,
     confidence: decision.confidence, place: decision.place, reason: decision.reason,

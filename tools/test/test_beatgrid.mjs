@@ -7,8 +7,9 @@
  * arithmetic is right: a track built at a known tempo and phase must come
  * back at that tempo and phase, and an off-beat that is louder than the beat
  * in the treble must not pull the grid half a beat out. The decisions on top
- * (gridDecision) are checked for direction: sharper bars half a beat later
- * move the grid there, and a moving tempo lowers the confidence. The tempo
+ * (gridDecision) are checked for direction: sharper bars, or the beat's shape,
+ * half a beat later move the grid there, and a moving tempo lowers the
+ * confidence. The tempo
  * refined over the whole track must find a tempo the first two minutes
  * cannot tell apart, and leave the phase where those two minutes put it.
  *
@@ -22,7 +23,7 @@ const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${l
 
 const dsp = new Function(readFileSync("web/js/dsp.js", "utf8") + readFileSync("web/js/beatgrid.js", "utf8")
   + readFileSync("web/js/downbeat.js", "utf8")
-  + "return { fitBeatGrid, estimateBeatGrid, gridDecision, wholeTrackTempo, analyzeTempo, gridScore, onsetPeaks, GRID_LATENCY_SEC, GRID_TEMPO_RATE };")();
+  + "return { fitBeatGrid, estimateBeatGrid, gridDecision, beatShapeContrast, wholeTrackTempo, analyzeTempo, gridScore, onsetPeaks, GRID_LATENCY_SEC, GRID_TEMPO_RATE };")();
 
 /* ---------- Measures ---------- */
 
@@ -47,7 +48,9 @@ const dsp = new Function(readFileSync("web/js/dsp.js", "utf8") + readFileSync("w
 
 const sr = 44100;
 // Kick on every beat, open hat and a bass stab on every off-beat. The hat is
-// far louder than the kick above 2 kHz -- the trap for a full-band envelope.
+// far louder than the kick above 2 kHz -- the trap for a full-band envelope --
+// and only there: noise twice differenced, as a hat is, not a clap across the
+// mids (which would mark the beat, as gridDecision has learned).
 function track(bpm, firstBeat, seconds, offbeatBass = true, rate = sr) {
   const y = new Float32Array(rate * seconds);
   const period = 60 / bpm;
@@ -55,13 +58,17 @@ function track(bpm, firstBeat, seconds, offbeatBass = true, rate = sr) {
   const noise = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
   for (let t = firstBeat; t < seconds; t += period) {
     const k = Math.round(t * rate);
-    for (let i = 0; i < 0.12 * rate && k + i < y.length; i++) {
+    // Rung out to silence: a kick cut short clicks across every band.
+    for (let i = 0; i < 0.4 * rate && k + i < y.length; i++) {
       const f = 55 + 90 * Math.exp(-i / (0.02 * rate)); // pitch-dropping kick
       y[k + i] += 0.8 * Math.sin((2 * Math.PI * f * i) / rate) * Math.exp(-i / (0.05 * rate));
     }
     const h = Math.round((t + period / 2) * rate);
+    let n1 = 0, n2 = 0;
     for (let i = 0; i < 0.05 * rate && h + i < y.length; i++) {
-      y[h + i] += 1.2 * noise() * Math.exp(-i / (0.01 * rate));
+      const n0 = noise();
+      y[h + i] += 0.6 * (n0 - 2 * n1 + n2) * Math.exp(-i / (0.01 * rate));
+      n2 = n1; n1 = n0;
       if (offbeatBass) y[h + i] += 0.25 * Math.sin((2 * Math.PI * 110 * i) / rate) * Math.exp(-i / (0.04 * rate));
     }
   }
@@ -106,6 +113,20 @@ for (const [bpm, first] of [[128.37, 0.215], [174.0, 0.05], [122.5, 0.4]]) {
     there.switched === true && here.switched === false);
   const none = dsp.gridDecision(fit, steady, null, null);
   check(`без признаков тактов — решает бочка, как раньше (${none.switched})`, none.switched === false);
+
+  // The beat's shape as it would be measured half a beat later: every
+  // profile turned by half. The kick fit is the same, so only the shape says
+  // the beat moved.
+  const turn = (p) => [...p.slice(p.length / 2), ...p.slice(0, p.length / 2)];
+  const turned = { ...fit, shape: { flux: fit.shape.flux.map(turn), level: fit.shape.level.map(turn) } };
+  const moved = dsp.gridDecision(turned, steady, null, null);
+  check(`форма доли на полдоли позже — сетка переезжает туда (${moved.switched})`, moved.switched === true);
+  const c = dsp.beatShapeContrast(fit.shape);
+  check(`признаки формы: 9 полос × 4 × (поток, уровень) = ${c.length}, в пределах обрезки (${Math.min(...c).toFixed(2)}…${Math.max(...c).toFixed(2)})`,
+    c.length === 72 && c.slice(0, 36).every((v) => Math.abs(v) <= 2) && c.slice(36).every((v) => Math.abs(v) <= 4));
+  const silent = dsp.beatShapeContrast({ flux: [[1, 0, 0, 0, 0, 0, 0, 0]], level: [[0, 0, 0, 0, 0, 0, 0, 9]] });
+  check(`пустая между ударами полоса не уводит признак за предел (${silent.join(", ")})`,
+    silent[0] === -2 && silent[7] === 4);
 }
 {
   // Six minutes at the rate the app sends: the comb over all of it tells
