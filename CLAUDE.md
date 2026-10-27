@@ -37,7 +37,7 @@ edges lag: two requests right after a push can return different builds.
 ## Architecture
 
 **Browser-only processing.** Audio never leaves the browser. The only outbound data is
-artist + title text to Discogs, MusicBrainz and Last.fm (for genre). Never write copy
+artist + title text to iTunes, Discogs, MusicBrainz and Last.fm (identification, genre). Never write copy
 claiming "nothing is sent" — the owner had that removed. Because the ZIP is built
 client-side, there is no server call behind the download: a public "trial" cannot be
 gated, which is why the app stays behind invite codes and only the landing is public.
@@ -81,7 +81,8 @@ read goes through `notify()` to a visible status line, not only to the log.
 to the remixer (Discogs remix release, then remixer's Last.fm/MusicBrainz tags, never
 the original artist) → Discogs (Hip-Hop split into Old School by earliest release
 year) → MusicBrainz recording → Last.fm track → file's own tag → Last.fm then
-MusicBrainz *artist* tags (returned with `weak: true`, shown as `?`) → `Unknown`.
+MusicBrainz *artist* tags (returned with `weak: true`, shown as `?`) → iTunes'
+store genre for the matched song, specific ones only, also weak → `Unknown`.
 There is deliberately no audio-based fallback: the old centroid classifier was 0/143
 right and was deleted. Artist/title come from the file's ID3 tags first, filename
 second (`usableTag`, `parseFilename` — which detects "Title - Artist" order).

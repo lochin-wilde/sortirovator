@@ -182,6 +182,7 @@ async function lookupAll(id, genresMap, artist, track, fileGenre) {
     const app = await id.resolveGenreFrom({
       tags: { genre: fileGenre || null }, artist, track, genresMap,
       options: { useDiscogs: true, useMusicbrainz: true, lastfmKey: "" }, recordingId: null,
+      itunesGenre: answers.itunes && answers.itunes.tag || null,
     }, { correctionFor: () => null, t: (key) => key });
     answers.app = { genre: app.genre, tag: app.source };
   } catch (e) {

@@ -9,8 +9,8 @@ Rekordbox imports directly.
 
 **The audio never leaves the browser.** Decoding, analysis and building the
 archive all happen on the machine the page is open on. The only things sent out
-are text — artist and title — to ask Discogs, MusicBrainz and Last.fm what genre
-a track is, and after each run an anonymous count: how many tracks, which mode,
+are text — artist and title — to ask iTunes, Discogs, MusicBrainz and Last.fm
+which track and genre it is, and after each run an anonymous count: how many tracks, which mode,
 which app version, with no names and no audio. The original files on disk are never modified.
 
 Live at [sortirovator.pages.dev](https://sortirovator.pages.dev): a public page

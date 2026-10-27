@@ -1189,6 +1189,9 @@ async function tryIdentifyItunes(artist, track) {
         id: null,
         source: "itunes",
         year: Number.isFinite(year) ? year : null,
+        // Kept for resolveGenreFrom, which falls back to it when nothing else
+        // names a genre.
+        itunesGenre: result.primaryGenreName || null,
         titleSimilarity: Math.round(titleSimilarity * 100) / 100,
         coreSimilarity: Math.round(coreSimilarity * 100) / 100,
         artistSimilarity: Math.round(artistSimilarity * 100) / 100,
@@ -1272,6 +1275,33 @@ async function musicbrainzGenre(artist, track, genresMap, recordingId) {
  * answer, it is the absence of one.
  */
 const GENERIC_CATEGORIES = new Set(["Pop", "Rock", "Electronic", "Unknown"]);
+
+/*
+ * iTunes' primaryGenreName as one of the app's categories, or null.
+ *
+ * iTunes files a song under one store genre, and most of a dance library sits
+ * in "Dance" or "Electronic" -- the answer that says nothing. Only a specific
+ * one is taken (House, Garage, Dubstep, Breakbeat). A few store names join two
+ * genres with a slash and are mapped whole: "Jungle/Drum'n'bass" is iTunes'
+ * drum & bass shelf, not a vote for Jungle. "Soundtrack" says where a song was
+ * used, not what it sounds like.
+ */
+const ITUNES_GENRES = {
+  "hip-hop/rap": "Hip-Hop",
+  "r&b/soul": "Funk / Soul",
+  "jungle/drum'n'bass": "Drum & Bass",
+  "soundtrack": null,
+};
+
+function itunesStyle(name, genresMap) {
+  const tag = String(name || "").toLowerCase().trim();
+  if (isNonGenreTag(tag)) return null;
+  const genre = Object.prototype.hasOwnProperty.call(ITUNES_GENRES, tag)
+    ? ITUNES_GENRES[tag]
+    : genreForTag(genresMap, tag);
+  if (!genre || GENERIC_CATEGORIES.has(genre)) return null;
+  return { genre, tag: String(name).trim() };
+}
 
 /* ------------------------------------------------------------------ */
 /* Discogs                                                             */
@@ -1588,7 +1618,7 @@ function normalizeGenre(genre, genresMap) {
 }
 
 async function resolveGenreFrom(context, deps) {
-  const { tags, artist, track, genresMap, options, recordingId } = context;
+  const { tags, artist, track, genresMap, options, recordingId, itunesGenre } = context;
 
   /*
    * What the user has already told us wins outright. They are looking at their
@@ -1769,6 +1799,22 @@ async function resolveGenreFrom(context, deps) {
   // Nothing more specific surfaced, so the umbrella tag is better than a guess.
   if (tagGenre !== "Unknown") {
     return { genre: tagGenre, source: 'file tag "' + tags.genre + '" (no online source had anything)' };
+  }
+
+  /*
+   * iTunes' store genre for the song it matched, as a last answer before
+   * Unknown. It is a claim about this track, but a coarse one, so it is marked
+   * weak and nothing above is displaced by it.
+   *
+   * Measured on 309 library tracks the app left 141 at Unknown; iTunes had a
+   * specific genre for 23 of them (House, Garage, Dubstep, Breakbeat). No
+   * reference could score those -- two sources agreed on too few tracks -- so
+   * this was taken on the owner's say-so and checked by eye against the
+   * folders: none was implausible. See tools/measure/genre_sources.mjs.
+   */
+  const fromItunes = itunesStyle(itunesGenre, genresMap);
+  if (fromItunes) {
+    return { genre: fromItunes.genre, source: 'iTunes genre "' + fromItunes.tag + '"', weak: true };
   }
 
   /*

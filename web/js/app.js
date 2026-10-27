@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.27.3";
+const APP_VERSION = "2026.10.27.4";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -720,6 +720,7 @@ async function processFile(file, options, slot) {
   let track = withoutArtistPrefix(usableTag(tags.title) || parsed.track, artist);
   let stem = tidied.cleaned;
   let recordingId = null;
+  let itunesGenre = null;
   // Recorded up front: the results table shows the artist regardless of which
   // steps are enabled, and corrections are filed against these names.
   result.feedbackArtist = artist || null;
@@ -738,6 +739,7 @@ async function processFile(file, options, slot) {
       artist = match.artist;
       track = finalTitle;
       recordingId = match.id || null;
+      itunesGenre = match.itunesGenre || null;
       // Rendered later by describeResult so the whole block comes out in one
       // language; logging it here as well produced each line twice.
       result.titleSimilarity = match.titleSimilarity;
@@ -820,7 +822,7 @@ async function processFile(file, options, slot) {
   if (options.steps.sort) {
     ui.fileStage.textContent = t("stage.genre");
     const resolved = await resolveGenre({
-      tags, artist, track, genresMap: state.genresMap, options, recordingId,
+      tags, artist, track, genresMap: state.genresMap, options, recordingId, itunesGenre,
     });
     result.genre = resolved.genre;
     result.genreSource = resolved.source;
