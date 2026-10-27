@@ -15,8 +15,9 @@
  *
  *   before   the tempo the app already shows (whole BPM) with the best phase
  *            for it -- what a grid would be without this work
- *   after    fitBeatGrid: tempo to 0.01 BPM, phase refined, and a "no grid"
- *            verdict when the track does not hold one tempo
+ *   after    estimateBeatGrid as the app runs it: tempo to 0.01 BPM, refined
+ *            over the whole track, phase refined, and a "no grid" verdict
+ *            when the track does not hold one tempo
  *
  * Tracks whose Rekordbox grid changes tempo by more than 0.5 BPM are kept
  * apart: there the question is whether we said "no grid".
@@ -136,7 +137,7 @@ export function scoreGrid(refMs, bpm, firstBeatSec, offsetMs = 0) {
 /* ------------------------------------------------------------------ */
 
 if (!isMainThread) {
-  const dsp = loadDsp(["analyzeTempo", "onsetStrength", "fitBeatGrid", "estimateBeatGrid", "mp3HeaderKind", "gridOffsetFor", "id3v2Length", "bestPhase", "onsetPeaks", "ONSET_HOP"],
+  const dsp = loadDsp(["analyzeTempo", "onsetStrength", "fitBeatGrid", "estimateBeatGrid", "mp3HeaderKind", "gridOffsetFor", "id3v2Length", "bestPhase", "onsetPeaks", "ONSET_HOP", "GRID_TEMPO_RATE"],
     readFileSync(join(ROOT, "web/js/beatgrid.js"), "utf8") + readFileSync(join(ROOT, "web/js/downbeat.js"), "utf8")
     + readFileSync(join(ROOT, "web/js/tags.js"), "utf8"));
   parentPort.on("message", (task) => {
@@ -144,10 +145,12 @@ if (!isMainThread) {
     try {
       const whole = decodeMono(task.file, RATE, WHOLE_TRACK_MAX_SECONDS).y;
       const y = whole.subarray(0, Math.min(whole.length, ANALYSIS_MAX_SECONDS * RATE));
+      // What the app sends for the grid's tempo: the whole track, resampled.
+      const forTempo = whole.length > y.length ? decodeMono(task.file, dsp.GRID_TEMPO_RATE, WHOLE_TRACK_MAX_SECONDS).y : null;
       const started = performance.now();
       const tempo = dsp.analyzeTempo(y, RATE);
       const grid = tempo.bpm ? dsp.fitBeatGrid(y, RATE, tempo.bpm) : null;
-      const final = tempo.bpm ? dsp.estimateBeatGrid(y, RATE, tempo.bpm, tempo) : null;
+      const final = tempo.bpm ? dsp.estimateBeatGrid(y, RATE, tempo.bpm, tempo, forTempo, dsp.GRID_TEMPO_RATE) : null;
       // The whole ID3 tag has to be skipped to find the MP3 header, and cover
       // art can make the tag hundreds of kilobytes long.
       const head = new Uint8Array(readFileSync(task.file).subarray(0, 4 * 1024 * 1024));

@@ -124,6 +124,8 @@ node tools/measure/measure_grid.mjs --half test     # ~20 min, beat grids agains
 node tools/measure/measure_downbeat.mjs              # ~40 min, which beat starts the bar; --rescore refits
 node tools/measure/grid_features.mjs                 # ~50 min, saves what the grid's decisions are made from
 node tools/measure/grid_models.mjs                   # seconds, refits half-beat and confidence models from that
+node tools/measure/grid_tempo.mjs                    # ~75 min, grid tempo over two minutes vs the whole track
+node tools/measure/grid_tempo.mjs --rescore          # seconds, scores the tempo rules on that dump
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 min, network-bound
 ```
 

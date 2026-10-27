@@ -259,6 +259,21 @@ energy winning, then refined to 0.002 BPM and rounded to 0.01. A full-band
 envelope was tried first and locked onto off-beat hats and bass about a
 quarter of the time.
 
+**Tempo over the whole track.** Two minutes are a short lever: 127.96 and
+128.00 BPM put the beats there at most 40 ms apart, but 110 ms apart by the end
+of a six-minute track. So the comb is run once more over the whole track
+(`wholeTrackTempo`), sent to the worker at 11 kHz — the kick band ends at
+150 Hz, and the same bin width and 6 ms hops cost a quarter of the work there
+— for tempos within ±0.1 BPM of the fit. Only the tempo is taken; the phase and
+every decision about it stay with the first two minutes. Taking the whole
+track's phase as well fixed 44 held-out grids and broke 46, and snapping to a
+whole BPM — Rekordbox's tempo is whole on 83% of one-tempo tracks, ours was on
+40% — did nothing useful at any gate (`tools/measure/grid_tempo.mjs`, rules
+chosen on the train half). With the tempo alone, held-out grids that are good
+go from 77.5% to 78.8% (McNemar 29 fixed, 4 broken, χ² = 17.5); of the grids
+it writes, 8 fixed and none broken; on tracks whose Rekordbox tempo moves,
+2 fixed, 1 broken.
+
 **Half a beat out** remains the main failure — 15% of grids on the train half,
 in every genre. A small logistic model over eight frequency bands' on/off
 evidence picks the phase first; on its own it gains little over never
@@ -292,14 +307,17 @@ depending on the file. Without a LAME header all three agree within ~5 ms.
 
 | | Before: whole BPM, best phase | Every grid | Grids it writes (49%) |
 |---|---|---|---|
-| F-measure ≥ 0.8 vs Rekordbox | 54.6% | 77.5% | **90.4%** |
-| BPM within 0.05 of Rekordbox | 75.9% | 89.2% | 91.2% |
-| Off by > 70 ms at the end | 37.2% | 18.4% | 9.6% |
+| F-measure ≥ 0.8 vs Rekordbox | 54.6% | 78.8% | **91.1%** |
+| BPM within 0.01 of Rekordbox | 68.6% | 80.7% | 81.6% |
+| BPM within 0.05 of Rekordbox | 75.9% | 91.4% | 92.3% |
+| Off by > 70 ms at the end | 37.2% | 16.2% | 7.4% |
 
-McNemar on F ≥ 0.8, before against every grid: 584 fixed, 113 broken, χ² = 317.
-Without the bar evidence these were 74.3% and 89.8% of 47% written. Tempo and
-grid take a median 4.8 s per track in Node, 0.7 s more than without it: the
-bar features now run on every track, not only those given a grid.
+McNemar on F ≥ 0.8, before against every grid: 594 fixed, 98 broken, χ² = 354.
+With the tempo from two minutes only, these were 77.5% and 90.4% (BPM within
+0.01: 69.5% and 71.9%; off at the end: 18.4% and 9.6%); without the bar
+evidence as well, 74.3% and 89.8% of 47% written. Tempo and grid take a median
+5.3 s per track in Node: 0.5 s for the whole-track tempo, 0.7 s for the bar
+features, which run on every track, not only those given a grid.
 Against the Serato grids in held-out files, the grids it wrote before the bar
 evidence were within 20 ms in 77.9% and within 70 ms in 91.5%, median 8.9 ms.
 
@@ -419,7 +437,9 @@ field when you are checking a set.
 **Analysis window is capped at 120 seconds.** The Python version analyses the
 whole file for BPM and key. Both are stable well inside that window and the cap
 keeps a batch usable in a browser. Loudness still measures the entire file,
-since that is a measurement rather than an estimate.
+since that is a measurement rather than an estimate. The beat grid's tempo is
+the one exception: a grid has to hold to the last beat, so it is refined over
+the whole track, sent to the worker at 11 kHz (see Beat grid).
 
 **The limiter is not ffmpeg's `alimiter`.** Both clamp to the same −1 dBTP
 ceiling, but the attack/release differ. On normal material this is invisible; on
@@ -481,7 +501,8 @@ still compute it.
 
 **Files are analysed four at a time** in a worker pool. The cap of four is about
 memory rather than cores — each worker holds a decoded track, roughly 42 MB for
-two minutes of 44.1 kHz stereo — and one core is left free so the interface stays
+two minutes of 44.1 kHz stereo, plus about 16 MB for a six-minute track at
+11 kHz for the grid's tempo — and one core is left free so the interface stays
 responsive. Log blocks are buffered and emitted in file order; interleaving
 three tracks' lines would make the log unreadable.
 

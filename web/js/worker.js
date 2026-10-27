@@ -80,6 +80,7 @@ async function handleAnalyze(msg) {
   session = {
     mono22k: msg.mono22k ? new Float32Array(msg.mono22k) : null,
     monoNative: msg.monoNative ? new Float32Array(msg.monoNative) : null,
+    monoTempo: msg.monoTempo ? new Float32Array(msg.monoTempo) : null,
     channels: msg.channels ? msg.channels.map((buffer) => new Float32Array(buffer)) : null,
     sampleRate: msg.sampleRate,
   };
@@ -112,7 +113,7 @@ async function handleAnalyze(msg) {
     // decided on the finished archive (app.js, downloadZip).
     if (tempo.bpm) {
       report("grid", 0);
-      result.grid = estimateBeatGrid(session.monoNative, session.sampleRate, tempo.bpm, tempo);
+      result.grid = estimateBeatGrid(session.monoNative, session.sampleRate, tempo.bpm, tempo, session.monoTempo, GRID_TEMPO_RATE);
     }
     report("key", 0);
     // The network wants 44.1 kHz; the main thread sends a resampled copy

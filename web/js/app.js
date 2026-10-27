@@ -25,13 +25,17 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.27.7";
+const APP_VERSION = "2026.10.27.8";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
 // network, KEY_MIN_CONFIDENCE in dsp.js for the chroma fallback.
 const KEY_CONFIDENCE_THRESHOLD = { cnn: 0.5, chroma: 0.5 };
 const ANALYSIS_MAX_SECONDS = 120;
+// The whole track, down to the kick band, for the grid's tempo (beatgrid.js,
+// wholeTrackTempo). Same rate there; longer than this is a mix, not a track.
+const GRID_TEMPO_RATE = 11025;
+const GRID_TEMPO_MAX_SECONDS = 900;
 const GENRE_ANALYSIS_RATE = 22050;
 const KEY_CNN_ANALYSIS_RATE = 44100; // KEY_CNN_RATE in keycnn.js
 
@@ -441,6 +445,27 @@ function downmixToMono(audioBuffer, maxSeconds) {
 }
 
 /*
+ * The whole decoded track as mono at `rate`: the offline context's one output
+ * channel downmixes and resamples in one native pass, with no full-rate copy.
+ * Null where the browser cannot render at that rate -- the grid then keeps
+ * the two-minute tempo.
+ */
+async function renderMono(audioBuffer, rate, maxSeconds) {
+  try {
+    const seconds = Math.min(audioBuffer.duration, maxSeconds);
+    const context = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, Math.max(1, Math.round(seconds * rate)), rate);
+    const source = context.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(context.destination);
+    source.start();
+    const rendered = await context.startRendering();
+    return new Float32Array(rendered.getChannelData(0));
+  } catch (e) {
+    return null;
+  }
+}
+
+/*
  * Resample with OfflineAudioContext rather than in JS: the browser's own
  * resampler is high quality and native speed, and the target rate here (22050)
  * is the one librosa.load defaults to on the Python side.
@@ -783,6 +808,8 @@ async function processFile(file, options, slot) {
     // needs no copy -- the worker reads monoNative -- so only resample others.
     const mono44k = options.steps.bpmKey && nativeRate !== KEY_CNN_ANALYSIS_RATE
       ? await resampleMono(monoNative, nativeRate, KEY_CNN_ANALYSIS_RATE) : null;
+    const monoTempo = options.steps.bpmKey && audioBuffer.duration > ANALYSIS_MAX_SECONDS
+      ? await renderMono(audioBuffer, GRID_TEMPO_RATE, GRID_TEMPO_MAX_SECONDS) : null;
 
     let channels = null;
     if (options.steps.loudness) {
@@ -801,9 +828,11 @@ async function processFile(file, options, slot) {
       monoNative: monoNative.buffer,
       mono22k: mono22k.buffer,
       mono44k: mono44k ? mono44k.buffer : null,
+      monoTempo: monoTempo ? monoTempo.buffer : null,
       channels: null,
     };
     if (mono44k) transfers.push(mono44k.buffer);
+    if (monoTempo) transfers.push(monoTempo.buffer);
     if (channels) {
       message.channels = channels.map((c) => c.buffer);
       for (const c of channels) transfers.push(c.buffer);

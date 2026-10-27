@@ -55,16 +55,16 @@ const GRID_CHECK_MIN_CONTRAST = 2;
 /*
  * Onset envelopes for several frequency bands from one pass of the STFT:
  * positive change of log-compressed magnitude within each band, one value per
- * GRID_HOP samples. Frames are centred, so value t describes time
- * t * GRID_HOP / sr. GRID_BANDS[0] is the kick band the grid is fitted on;
- * the others only help decide which of two half-beat phases is the beat.
+ * `hop` samples (GRID_HOP, an n = GRID_FFT window, unless given). Frames are
+ * centred, so value t describes time t * hop / sr. GRID_BANDS[0] is the kick
+ * band the grid is fitted on; the others only help decide which of two
+ * half-beat phases is the beat.
  */
 const GRID_BANDS = [[GRID_BASS_MIN_HZ, GRID_BASS_MAX_HZ],
   [30, 60], [60, 120], [120, 250], [250, 500], [500, 1000], [1000, 2000], [2000, 4000], [4000, 8000]];
 
-function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS) {
-  const n = GRID_FFT;
-  const frames = Math.floor(y.length / GRID_HOP) + 1;
+function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_HOP) {
+  const frames = Math.floor(y.length / hop) + 1;
   const ranges = bands.map(([from, to]) => [
     Math.max(1, Math.floor((from * n) / sr)),
     Math.min((n >> 1) - 1, Math.ceil((to * n) / sr)),
@@ -78,7 +78,7 @@ function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS) {
   let cur = new Float64Array(top + 1);
   const envs = bands.map(() => new Float64Array(frames));
   for (let t = 0; t < frames; t++) {
-    const start = t * GRID_HOP - (n >> 1);
+    const start = t * hop - (n >> 1);
     for (let i = 0; i < n; i++) {
       const idx = start + i;
       re[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
@@ -314,6 +314,49 @@ function fitBeatGrid(y, sr, bpmHint) {
   };
 }
 
+/*
+ * The tempo, refined over the whole track.
+ *
+ * fitBeatGrid sees the first two minutes, and two minutes are a short lever:
+ * 127.96 and 128.00 BPM put the beats there at most 40 ms apart, while by the
+ * end of a six-minute track the gap is 110 ms. Rekordbox fits the whole track.
+ * So the kick-band comb is run once more over all of it, for tempos within
+ * GRID_TEMPO_SEARCH_BPM of the fit at 0.01 BPM, each with its best phase, and
+ * the best tempo wins. Only the tempo is taken: the phase, and every decision
+ * about it, stay with the first two minutes -- the phase the whole track
+ * prefers lost more grids than it fixed.
+ *
+ * The kick band ends at GRID_BASS_MAX_HZ, so the app sends the whole track at
+ * GRID_TEMPO_RATE, and the window and hop shrink with it: the same bin width
+ * and the same 6 ms frames as the 44.1 kHz fit, at a quarter of the work.
+ *
+ *   whole   the whole track, mono, at `sr` (GRID_TEMPO_RATE in the app)
+ *   bpm     fitBeatGrid's tempo
+ *
+ * Returns the tempo to 0.01 BPM.
+ */
+const GRID_TEMPO_RATE = 11025;
+const GRID_TEMPO_FFT = 512;
+const GRID_TEMPO_HOP = 64;
+const GRID_TEMPO_SEARCH_BPM = 0.1;
+
+function wholeTrackTempo(whole, sr, bpm) {
+  const fps = sr / GRID_TEMPO_HOP;
+  const env = bandOnsetEnvelopes(whole, sr, [GRID_BANDS[0]], GRID_TEMPO_FFT, GRID_TEMPO_HOP)[0];
+  const peaks = onsetPeaks(env, fps);
+  let best = { bpm, score: -Infinity };
+  const steps = Math.round(GRID_TEMPO_SEARCH_BPM * 100);
+  for (let k = -steps; k <= steps; k++) {
+    const candidate = Math.round(bpm * 100 + k) / 100;
+    const period = (60 * fps) / candidate;
+    const coarse = bestPhase(peaks, period, GRID_COARSE_PHASE_STEP, 0, peaks.length);
+    const fine = bestPhase(peaks, period, GRID_FINE_PHASE_STEP, 0, peaks.length,
+      coarse.phase - 2 * GRID_COARSE_PHASE_STEP, coarse.phase + 2 * GRID_COARSE_PHASE_STEP);
+    if (fine.score > best.score) best = { bpm: candidate, score: fine.score };
+  }
+  return best.bpm;
+}
+
 /* ------------------------------------------------------------------ */
 /* The grid the app uses                                               */
 /* ------------------------------------------------------------------ */
@@ -408,6 +451,9 @@ function gridDecision(fit, tempo, here, away) {
  * The beat grid for a track, ready to show or write. `tempo` is analyzeTempo's
  * result. Needs downbeat.js.
  *
+ * `whole` is the whole track at `wholeRate` (wholeTrackTempo); without it, or
+ * when it is no longer than `y`, the tempo is the first two minutes' own.
+ *
  * Returns { bpm, firstBeat, downbeat, confidence, place, reason } or null.
  * firstBeat is in seconds on the decoded audio's own timeline (what the
  * browser and ffmpeg both produce); writing it for another program needs that
@@ -416,7 +462,7 @@ function gridDecision(fit, tempo, here, away) {
  * when the grid should not be written: "unsure" when the confidence model is
  * below GRID_MIN_CONFIDENCE, "dynamic" when that is so and the tempo moves.
  */
-function estimateBeatGrid(y, sr, bpmHint, tempo) {
+function estimateBeatGrid(y, sr, bpmHint, tempo, whole = null, wholeRate = GRID_TEMPO_RATE) {
   const fit = fitBeatGrid(y, sr, bpmHint);
   if (!fit) return null;
   const frames = downbeatFrames(y, sr);
@@ -424,9 +470,10 @@ function estimateBeatGrid(y, sr, bpmHint, tempo) {
   const start = kickFirstBeat(fit);
   const half = fit.period / 2;
   const decision = gridDecision(fit, tempo, bars(start), bars(start + half));
-  const firstBeat = Math.round(wrapPhase(start + (decision.switched ? half : 0), fit.period) * 10000) / 10000;
+  const bpm = whole && whole.length / wholeRate > y.length / sr + 1 ? wholeTrackTempo(whole, wholeRate, fit.bpm) : fit.bpm;
+  const firstBeat = Math.round(wrapPhase(start + (decision.switched ? half : 0), 60 / bpm) * 10000) / 10000;
   return {
-    bpm: fit.bpm, firstBeat, downbeat: downbeatPhase(bars(firstBeat)).phase,
+    bpm, firstBeat, downbeat: downbeatPhase(bars(firstBeat)).phase,
     confidence: decision.confidence, place: decision.place, reason: decision.reason,
   };
 }
