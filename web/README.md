@@ -120,6 +120,7 @@ is a record of what happened rather than live interface text.
 | `css/styles.css` | Design tokens and styling, dark and light. The landing and login page copy the same tokens inline; `tools/test/test_style.mjs` fails if they drift |
 | `js/dsp.js` | FFT, onset/tempogram BPM, CQT chroma key (the fallback) |
 | `js/beatgrid.js` | Beat grid: kick-band onset envelope, comb fit to 0.01 BPM, half-beat and confidence models |
+| `js/downbeat.js` | Which beat starts the bar: beat-synchronous band energy and chroma change, softmax over the four phases |
 | `js/keycnn.js` | Key network: madmom's spectrogram and Korzeniowski & Widmer's CNN, ported for inference; weights in `data/key_cnn.bin` (CC BY-NC-SA 4.0) |
 | `js/loudness.js` | ITU-R BS.1770 loudness, true peak, limiter, silence trim, resampler, WAV/MP3 encoders |
 | `js/tags.js` | Reads ID3v2, Vorbis comments and MP4 ilst; writes ID3v2.4 into MP3 and WAV |
@@ -287,8 +288,17 @@ Against the Serato grids in held-out files, the grids it writes are within
 
 **Not solved.** The "no grid" verdict does not pick out tempo-changing tracks:
 it withholds 48% of those and 53% of one-tempo tracks alike; what it does is
-withhold doubtful grids. Bars are not found: the first beat is written as the
-first of a bar, which is where Rekordbox puts it for 69% of the tracks.
+withhold doubtful grids.
+
+**Bars.** `js/downbeat.js` picks which of the first four beats starts a bar:
+per beat, eight band energies and a chroma; per candidate phase, how much they
+change across the beat and the bar it would start, on average and at the
+largest changes, and how hard the kick and the top end hit — relative to the
+other three phases, scored by a softmax fitted on the train half against
+Rekordbox's bar numbers (`tools/measure/measure_downbeat.mjs`). On held-out
+grids it writes, the bar starts where Rekordbox's does for 88.3% of tracks,
+against 68.2% for "the first beat starts a bar" (McNemar 188 fixed, 14 broken).
+It goes into `rekordbox.xml` as `Battito`; the Serato tag has no place for it.
 
 **Rekordbox.** CDJs read grids from Rekordbox, not from the file, so the archive
 can carry a `rekordbox.xml` (`buildGridImport` in `js/rekordbox.js`): a TRACK

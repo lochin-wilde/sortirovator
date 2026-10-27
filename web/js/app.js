@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.27.5";
+const APP_VERSION = "2026.10.27.6";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -1813,6 +1813,7 @@ function rekordboxGridXml(seratoTagBytes) {
       seconds: result.duration,
       bpm: result.grid.bpm,
       firstBeat: result.grid.firstBeat + gridOffsetFor("rekordbox", exp.kind, 44100, tagBytes),
+      downbeat: result.grid.downbeat || 0,
     });
   }
   return { xml: buildGridImport(tracks, RB_GRID_PLAYLIST), count: tracks.length, skipped };

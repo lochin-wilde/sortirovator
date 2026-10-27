@@ -42,9 +42,10 @@ check("разные файлы — разные ключи", R.locationKey(mac) 
 /* ---------- XML ---------- */
 
 const tracks = [
-  { location: mac, name: 'A "quoted" & <odd>', artist: "Kraak & Smaak", genre: "UK Garage", kind: "MP3 File", seconds: 301.6, bpm: 130, firstBeat: 0.0623 },
-  // A first beat before 0 (an offset can push it there) moves one beat later.
-  { location: win, name: "b", artist: "", genre: "", kind: "WAV File", seconds: 200, bpm: 120, firstBeat: -0.1 },
+  { location: mac, name: 'A "quoted" & <odd>', artist: "Kraak & Smaak", genre: "UK Garage", kind: "MP3 File", seconds: 301.6, bpm: 130, firstBeat: 0.0623, downbeat: 1 },
+  // A first beat before 0 (an offset can push it there) moves one beat later,
+  // and its number in the bar with it.
+  { location: win, name: "b", artist: "", genre: "", kind: "WAV File", seconds: 200, bpm: 120, firstBeat: -0.1, downbeat: 0 },
 ];
 const xml = R.buildGridImport(tracks, "Музыкальный сортир — сетка");
 const pyCheck = `
@@ -65,10 +66,15 @@ try {
   py = execFileSync("python3", ["-c", pyCheck], { input: xml }).toString().trim().split("\n");
 } catch (e) { py = ["ОШИБКА: " + e.message.split("\n")[0]]; }
 check("Python разбирает файл как корректный XML", !py[0].startsWith("ОШИБКА"));
-check(`первый трек: имя с кавычками и &, жанр, MP3, 302 с, 130.00 BPM, одна TEMPO (${py[0]})`,
-  py[0] === '1|A "quoted" & <odd>|Kraak & Smaak|UK Garage|MP3 File|302|130.00|1|0.062|130.00|4/4|1');
-check(`первая доля до начала файла сдвинута на долю позже: 0.400 (${py[1]})`,
-  py[1] === "2|b||-|WAV File|200|120.00|1|0.400|120.00|4/4|1");
+check(`первый трек: имя с кавычками и &, жанр, MP3, 302 с, 130.00 BPM, одна TEMPO; такт со 2-й доли — первая доля 4-я в такте (${py[0]})`,
+  py[0] === '1|A "quoted" & <odd>|Kraak & Smaak|UK Garage|MP3 File|302|130.00|1|0.062|130.00|4/4|4');
+check(`первая доля до начала файла сдвинута на долю позже: 0.400, и это уже 2-я доля такта (${py[1]})`,
+  py[1] === "2|b||-|WAV File|200|120.00|1|0.400|120.00|4/4|2");
+{
+  const battito = (downbeat) => R.buildGridImport([{ ...tracks[0], downbeat }], "x").match(/Battito="(\d)"/)[1];
+  check(`начало такта → номер первой доли: 0→1, 1→4, 2→3, 3→2, нет данных→1 (${[0, 1, 2, 3, undefined].map(battito)})`,
+    [0, 1, 2, 3, undefined].map(battito).join() === "1,4,3,2,1");
+}
 check(`плейлист со всеми треками по TrackID (${py[2]})`, py[2] === "Музыкальный сортир — сетка|2|1,2");
 
 const back = R.readRekordboxXml(xml);

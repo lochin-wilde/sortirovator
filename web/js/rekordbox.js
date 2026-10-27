@@ -266,9 +266,9 @@ function lookupNames(attrs, split) {
  *
  * Format as pyrekordbox documents Rekordbox's own XML: a TRACK per file with a
  * file://localhost URI, and one TEMPO child -- Inizio in seconds, Bpm, Metro,
- * and Battito, the first beat's place in the bar. The app does not find bars,
- * so Battito is 1; measured against Rekordbox's grids that is the right bar
- * position for 69% of the tracks given a grid.
+ * and Battito, the first beat's place in the bar. Which beat starts the bar
+ * comes from downbeat.js: right by Rekordbox's own bars for 88% of the tracks
+ * given a grid, where "the first beat starts a bar" was right for 68%.
  */
 
 /*
@@ -297,8 +297,10 @@ function trackLocation(folder, relative) {
 }
 
 /*
- * tracks: [{ location, name, artist, genre, kind, seconds, bpm, firstBeat }],
- * firstBeat already on Rekordbox's timeline (see gridOffsetFor in tags.js).
+ * tracks: [{ location, name, artist, genre, kind, seconds, bpm, firstBeat,
+ * downbeat }], firstBeat already on Rekordbox's timeline (see gridOffsetFor in
+ * tags.js), downbeat the phase from downbeat.js: 0 when the first beat starts
+ * a bar, k when the k-th beat after it does.
  */
 function buildGridImport(tracks, playlistName) {
   const attr = (name, value) => " " + name + '="' + xmlEscapeAttr(value) + '"';
@@ -307,7 +309,10 @@ function buildGridImport(tracks, playlistName) {
     // A grid line before the start of the file means nothing to Rekordbox;
     // the same grid one beat later does.
     let first = track.firstBeat;
-    while (first < 0) first += period;
+    let downbeat = track.downbeat || 0;
+    while (first < 0) { first += period; downbeat = (downbeat + 3) % 4; }
+    // Battito is the number of the Inizio beat within its bar.
+    const battito = downbeat === 0 ? 1 : 5 - downbeat;
     return "    <TRACK" + attr("TrackID", i + 1)
       + attr("Name", track.name || "") + attr("Artist", track.artist || "")
       + (track.genre ? attr("Genre", track.genre) : "")
@@ -316,7 +321,7 @@ function buildGridImport(tracks, playlistName) {
       + attr("AverageBpm", track.bpm.toFixed(2))
       + attr("Location", track.location) + ">\n"
       + '      <TEMPO Inizio="' + first.toFixed(3) + '" Bpm="' + track.bpm.toFixed(2)
-      + '" Metro="4/4" Battito="1"/>\n'
+      + '" Metro="4/4" Battito="' + battito + '"/>\n'
       + "    </TRACK>";
   });
   return '<?xml version="1.0" encoding="UTF-8"?>\n\n'

@@ -55,6 +55,7 @@ web/                  the app, served as static files
   js/dsp.js           FFT, tempogram BPM, CQT chroma key (the fallback)
   js/keycnn.js        key network: madmom's spectrogram and CNN, ported
   js/beatgrid.js      beat grid: kick envelope, comb fit, half-beat and confidence models
+  js/downbeat.js      which beat starts the bar, for the Rekordbox grid
   js/loudness.js      BS.1770, true peak, limiter, resampler, WAV and MP3
   js/tags.js          reading and writing ID3v2, Vorbis and MP4 tags
   js/rekordbox.js     reading a Rekordbox collection export, writing genres back
@@ -120,6 +121,7 @@ node tools/measure/measure_bpm.mjs                  # ~10 min
 node tools/measure/measure_key.mjs --detector cnn   # ~30 min; without the flag, the chroma fallback
 python3 tools/groundtruth/rekordbox_anlz.py --grids ground-truth/rekordbox_grids.json
 node tools/measure/measure_grid.mjs --half test     # ~20 min, beat grids against Rekordbox's
+node tools/measure/measure_downbeat.mjs              # ~40 min, which beat starts the bar; --rescore refits
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 min, network-bound
 ```
 
