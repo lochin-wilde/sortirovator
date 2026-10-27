@@ -512,6 +512,16 @@ th.sortable.sorted.descending::after {
   user-select: all;
 }
 
+/* Who is signed in, next to "Sign out". A typed name can be long. */
+.signed-in-as {
+  font-size: 0.8rem;
+  color: var(--text);
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The sign-out form is only a wrapper for its button; it must not take part in
    the masthead layout as a block of its own. */
 .signout-form {

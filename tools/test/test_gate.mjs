@@ -64,7 +64,10 @@ const req = (method, opts = {}) => {
   return new Request("https://example.com/", {
     method,
     headers,
-    body: opts.code !== undefined ? new URLSearchParams({ code: opts.code }) : undefined,
+    // Every login now carries a name; `name: null` leaves the field out.
+    body: opts.code !== undefined
+      ? new URLSearchParams(opts.name === null ? { code: opts.code } : { name: opts.name ?? "Тестер", code: opts.code })
+      : undefined,
   });
 };
 
@@ -75,6 +78,7 @@ const req = (method, opts = {}) => {
  */
 const makeAttemptsDb = ({ fail = false } = {}) => {
   let rows = [];
+  const members = [];
   const exec = (sql, args) => {
     if (fail) throw new Error("D1 unavailable");
     if (sql.startsWith("SELECT")) {
@@ -85,13 +89,18 @@ const makeAttemptsDb = ({ fail = false } = {}) => {
         oldest: hits.length ? Math.min(...hits.map((r) => r.at)) : null,
       };
     }
-    if (sql.startsWith("INSERT")) rows.push({ ip: args[0], at: args[1] });
+    if (sql.startsWith("INSERT INTO members")) {
+      const [invite, name, , at] = args;
+      const row = members.find((m) => m.invite === invite && m.name === name);
+      if (row) { row.logins++; row.last_at = at; } else members.push({ invite, name, last_at: at, logins: 1 });
+    } else if (sql.startsWith("INSERT")) rows.push({ ip: args[0], at: args[1] });
     else if (sql.includes("WHERE at <=")) rows = rows.filter((r) => r.at > args[0]);
     else if (sql.includes("WHERE ip =")) rows = rows.filter((r) => r.ip !== args[0]);
     return null;
   };
   return {
     get rows() { return rows; },
+    members,
     prepare(sql) {
       return {
         bind: (...args) => ({
@@ -345,6 +354,67 @@ check("и приложение при этом не отдано", served === se
   // Без привязки базы ограничение просто не действует, а не падает.
   last = await run(req("POST", { code: "DJ-AAAA-BBBB-CCCC", ip: "203.0.113.7" }), env);
   check("без базы вход работает как раньше", last.status === 303);
+}
+
+// 15. Имя или ник перед кодом
+{
+  const db = makeAttemptsDb();
+  const envN = { ...env, DB: db };
+  const login = async (name, code = "DJ-AAAA-BBBB-CCCC") => {
+    const resp = await run(req("POST", { code, name, ip: "192.0.2.5" }), envN);
+    const tok = (resp.headers.get("Set-Cookie") || "").split(";")[0].split("=").slice(1).join("=");
+    if (tok) await run(req("GET", { cookie: "sortir_session=" + tok }), envN);
+    return { resp, name: tok ? lastData.name : undefined };
+  };
+
+  const servedBeforeName = served;
+  let x = await login(null);
+  check("без имени -> 400, кука не выдана, приложение не отдано",
+    x.resp.status === 400 && !x.resp.headers.get("Set-Cookie") && served === servedBeforeName);
+  check("в ответе просьба написать имя", (await x.resp.text()).includes("Напишите имя или ник"));
+  x = await login(" x ");
+  check("имя из одного знака не принимается", x.resp.status === 400);
+  x = await login("я".repeat(41));
+  check("имя длиннее 40 знаков не принимается", x.resp.status === 400);
+  check("пустое имя не считается попыткой подбора кода", db.rows.length === 0);
+
+  x = await login("  Ваня\t  Петров ");
+  check(`имя доходит до сессии без лишних пробелов («${x.name}»)`, x.resp.status === 303 && x.name === "Ваня Петров");
+  check("имя с точками не ломает разбор сессии", (await login("D.J. Max")).name === "D.J. Max");
+  check("метка кода по-прежнему доходит рядом с именем", lastData.invite === "tester-one");
+
+  check("вход записан: приглашение и имя", db.members.some((m) => m.invite === "tester-one" && m.name === "Ваня Петров"));
+  await login("Ваня Петров");
+  const vanya = db.members.filter((m) => m.name === "Ваня Петров");
+  check(`повторный вход — та же строка, счётчик растёт (${vanya.map((m) => m.logins)})`, vanya.length === 1 && vanya[0].logins === 2);
+
+  x = await login("<b>Ваня</b>", "НЕВЕРНЫЙ");
+  const page = await x.resp.text();
+  check("неверный код: имя остаётся в поле, разметка экранирована",
+    x.resp.status === 401 && page.includes('value="&lt;b&gt;Ваня&lt;/b&gt;"') && !page.includes("<b>Ваня"));
+
+  // Сессии, выданные до того, как спросили имя, продолжают пускать: в них три
+  // поля, а не четыре.
+  const oldPayload = `${Math.floor(Date.now() / 1000) + 9999}.tester-one.user`;
+  const oldKey = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const oldSig = Buffer.from(await crypto.subtle.sign("HMAC", oldKey, new TextEncoder().encode(oldPayload)))
+    .toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const servedBeforeOld = served;
+  r = await run(req("GET", { cookie: `sortir_session=${oldPayload}.${oldSig}` }));
+  check("старая сессия без имени действует, имя пустое",
+    served === servedBeforeOld + 1 && lastData.invite === "tester-one" && lastData.name === "");
+}
+
+{
+  const table = (sql) => {
+    const from = sql.indexOf("CREATE TABLE IF NOT EXISTS members");
+    return sql.slice(from, sql.indexOf(");", from) + 2)
+      .split("\n").filter((line) => !line.trim().startsWith("--")).join("\n").trim();
+  };
+  const migration = table(readFileSync("db/migrations/0003_members.sql", "utf8"));
+  check("таблица members одинакова в миграции и в schema.sql",
+    migration.length > 0 && migration === table(readFileSync("db/schema.sql", "utf8")));
 }
 
 const servedBeforeUnconfigured = served;

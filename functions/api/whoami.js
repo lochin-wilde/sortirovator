@@ -6,7 +6,8 @@
  * page from stealing it. But the UI still needs to know, in this one
  * harmless respect, whether to show the admin link: this route reads the
  * already-verified context.data set by the middleware and hands back just
- * the label and role, never the session token itself.
+ * the label, role and the name typed at sign-in, never the session token
+ * itself.
  *
  * Always 200: reaching this file at all means _middleware.js already
  * accepted the session, so there is nothing left to check here.
@@ -24,5 +25,6 @@ export async function onRequest(context) {
   return json({
     label: (data && data.invite) || "",
     role: (data && data.role) || "user",
+    name: (data && data.name) || "",
   });
 }

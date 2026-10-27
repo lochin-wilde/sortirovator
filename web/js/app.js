@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.27.9";
+const APP_VERSION = "2026.10.28.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -2586,6 +2586,11 @@ if (["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) ui.logBox.h
     const res = await fetch("/api/whoami", { credentials: "same-origin" });
     if (!res.ok) return;
     const info = await res.json();
+    const who = el("signed-in-as");
+    if (who && info && info.name) {
+      who.textContent = info.name;
+      who.hidden = false;
+    }
     if (info && info.role === "admin") {
       adminLink.hidden = false;
       ui.logBox.hidden = false;

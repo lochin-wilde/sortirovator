@@ -55,6 +55,22 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 CREATE INDEX IF NOT EXISTS login_attempts_ip_at ON login_attempts (ip, at);
 
 
+-- Who signs in: the name or nickname typed next to the invite code, one row
+-- per invite and name. Same statement as db/migrations/0003_members.sql, which
+-- explains each column.
+CREATE TABLE IF NOT EXISTS members (
+  -- The label next to the code in INVITE_CODES: who the code was handed to.
+  invite    TEXT    NOT NULL,
+  -- What the person typed, normalised (cleanName): NFC, single spaces, 2-40 characters.
+  name      TEXT    NOT NULL,
+  -- ISO 8601 UTC, the server's clock.
+  first_at  TEXT    NOT NULL,
+  last_at   TEXT    NOT NULL,
+  logins    INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (invite, name)
+);
+
+
 -- Usage counter: one row per finished run, numbers only. Same statement as
 -- db/migrations/0002_usage.sql, which explains each column.
 CREATE TABLE IF NOT EXISTS usage (

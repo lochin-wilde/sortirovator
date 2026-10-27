@@ -68,6 +68,18 @@ directory: code shipped to the browser cannot keep a secret, so a check that
 runs there can only ever be a suggestion. It also could not be reconciled with
 individual codes without publishing them.
 
+### Name at sign-in
+
+The form asks for a name or nickname before the code, so that accounts can
+later be built on it without asking every tester again. The middleware
+normalises it (`cleanName`: 2–40 characters, single spaces), carries it in the
+signed session next to the invite label, and records one row per invite and
+name in the D1 table `members` — first and last sign-in and a count. The app
+shows it beside "Sign out" (`/api/whoami`). A missing name answers 400 and is
+not counted as a guess. The table comes from `db/migrations/0003_members.sql`;
+until that is applied, sign-in works and nothing is recorded. Sessions issued
+before this carry no name and keep working. The landing says the name is kept.
+
 ### Rate limiting
 
 The form answers every guess instantly and for free, so without a limit a

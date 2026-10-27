@@ -77,14 +77,10 @@ body{margin:0;background:var(--bg);color:var(--text);
 h1{font-size:clamp(28px,6vw,40px);line-height:1.08;letter-spacing:-.02em;margin:0;text-wrap:balance}
 h2{font-size:18px;letter-spacing:-.01em;margin:0}
 p{margin:0}
-code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel-2);
-  padding:1px 5px;border-radius:4px}
 .lede{font-size:17px;color:var(--muted);max-width:54ch}
 .eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
   color:var(--accent);margin:0 0 10px}
 section{display:flex;flex-direction:column;gap:14px}
-ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;color:var(--muted)}
-li strong{color:var(--text)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
   background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
 .stat{background:var(--panel);padding:14px 16px;display:flex;flex-direction:column;gap:2px}
@@ -99,11 +95,17 @@ input[type=text]{flex:1 1 220px;min-width:0;padding:.6rem .8rem;
   font:15px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;
   background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:8px}
 input[type=text]:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+header{display:flex;flex-direction:column;gap:12px}
+header .eyebrow{margin:0}
+.gate form{display:flex;flex-direction:column;gap:6px}
+/* In a column the shared input rule's flex-basis would set the height. */
+.gate form input{flex:none}
+.gate form label+input{margin-bottom:8px}
+#name{font-family:inherit;letter-spacing:normal}
 /* Same shape as .button.primary in styles.css. */
 button{padding:.55rem 1.1rem;font-size:.95rem;font-weight:600;color:#fff;background:var(--accent);
   border:1px solid var(--accent);border-radius:8px;cursor:pointer;transition:background .15s}
 button:hover{background:var(--accent-2)}
-.msg{font-size:14px;color:var(--warn)}
 .note{font-size:14.5px;color:var(--muted);border-left:2px solid var(--line);padding-left:14px}
 footer{font-size:13.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
 /*
@@ -120,53 +122,40 @@ footer{font-size:13.5px;color:var(--muted);border-top:1px solid var(--line);padd
 <header>
   <p class="eyebrow">Музыкальный сортир</p>
   <h1>Раскладывает фонотеку, пока вы собираетесь на сет</h1>
-  <p class="lede">Читает папку с треками, чинит имена, определяет темп и тональность, расставляет по жанрам и собирает архив с плейлистами для Rekordbox.</p>
+  <p class="lede">Чинит имена, считает темп и тональность, раскладывает по 53 жанрам и собирает архив с плейлистами для Rekordbox. Прямо в браузере.</p>
 </header>
 
-<section>
-  <h2>Что он делает</h2>
-  <ul>
-    <li><strong>Чинит имена.</strong> Убирает то, что дописали сайты-качалки, и приводит латиницу обратно в кириллицу.</li>
-    <li><strong>Считает темп и тональность.</strong> Тональность в нотации Camelot, как в Rekordbox.</li>
-    <li><strong>Раскладывает по жанрам.</strong> 53 категории, различимые диджеем, а не «Electronic» на всё подряд.</li>
-    <li><strong>Выравнивает громкость.</strong> По LUFS, с лимитером и обрезкой тишины.</li>
-    <li><strong>Пишет теги и плейлисты.</strong> Жанр, темп и тональность попадают в сам файл, рядом ложатся списки <code>.m3u8</code>.</li>
-  </ul>
+<section class="gate">
+  <h2>Вход</h2>
+  <p>Закрытый тест: код выдаётся лично.</p>
+  <form method="POST" action="/">
+    <label for="name">Имя или ник</label>
+    <input type="text" id="name" name="name" autocomplete="nickname" spellcheck="false"
+           minlength="2" maxlength="40" required>
+    <label for="code">Код приглашения</label>
+    <input type="text" id="code" name="code" autocomplete="off" autocapitalize="characters"
+           spellcheck="false" placeholder="DJ-XXXX-XXXX-XXXX" required>
+    <div class="row"><button type="submit">Войти</button></div>
+  </form>
 </section>
 
 <section>
   <h2>Насколько точно</h2>
-  <p class="lede">Проверено на размеченной фонотеке: темп и тональность сверены с базой Rekordbox, жанр — с тем, как треки разложены руками.</p>
   <div class="stats">
     <div class="stat"><b>93.4%</b><span>темп, 4459 треков</span></div>
     <div class="stat"><b>66.3%</b><span>тональность, 4523</span></div>
     <div class="stat"><b>20.5%</b><span>жанр, 375</span></div>
   </div>
-  <p class="note">Жанр — слабое место, и мы это показываем, а не прячем. Там, где источники молчат, поле остаётся пустым: пустое поле честнее уверенной ошибки, и его можно поправить одним щелчком.</p>
-  <p class="note">Тональность определяет нейросеть Филипа Корженёвского и Герхарда Видмера (Университет Иоганна Кеплера, Линц) из открытой библиотеки madmom — она работает прямо в браузере. На независимом наборе GiantSteps она угадывает 67.5% тональностей точно, прежний метод — 57.8%. Веса сети распространяются по лицензии CC BY-NC-SA 4.0.</p>
+  <p class="note">Сверено с базой Rekordbox и ручной раскладкой. Жанр пока слабое место: где источники молчат, поле остаётся пустым.</p>
 </section>
 
 <section>
   <h2>Куда уходят данные</h2>
-  <p class="note">Аудио не покидает браузер — разбор, анализ и сборка архива идут на вашей машине. Наружу уходит только текст: артист и название, чтобы спросить про трек и жанр у iTunes, Discogs, MusicBrainz и Last.fm, и после каждого прогона — обезличенная статистика: сколько треков, какой режим, какая версия приложения, без названий и звука. Сами файлы никуда не отправляются, а оригиналы на диске не меняются.</p>
-</section>
-
-<section class="gate">
-  <h2>Вход по коду</h2>
-  <p>Пока это закрытый тест. Код выдаётся лично.</p>
-  <form method="POST" action="/">
-    <label for="code">Код приглашения</label>
-    <div class="row">
-      <input type="text" id="code" name="code" autocomplete="off" autocapitalize="characters"
-             spellcheck="false" placeholder="DJ-XXXX-XXXX-XXXX" required>
-      <button type="submit">Войти</button>
-    </div>
-  </form>
-  <p class="msg">Нет кода? Напишите владельцу — доступ открывается вручную.</p>
+  <p class="note">Звук не покидает браузер, оригиналы на диске не меняются. Наружу уходят артист и название — чтобы найти жанр в iTunes, Discogs, MusicBrainz и Last.fm, — обезличенная статистика прогонов и имя, которое вы вводите при входе: оно хранится вместе с кодом приглашения.</p>
 </section>
 
 <footer>
-  Работает в браузере, без установки. Chrome, Safari, Firefox и Edge.
+  Chrome, Safari, Firefox и Edge, без установки. Тональность — нейросеть Ф. Корженёвского и Г. Видмера (madmom, CC BY-NC-SA 4.0).
 </footer>
 
 </div>

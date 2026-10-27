@@ -147,14 +147,14 @@ function decodeLabel(encoded) {
     }
 }
 
-async function issueSession(secret, label, role) {
+async function issueSession(secret, label, role, name) {
     const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-    const payload = `${expires}.${encodeLabel(label)}.${role}`;
+    const payload = `${expires}.${encodeLabel(label)}.${role}.${encodeLabel(name || "")}`;
     return `${payload}.${await hmac(secret, payload)}`;
 }
 
 /*
- * Returns { label, role } the session was issued to, or null if the token is
+ * Returns { label, role, name } the session was issued to, or null if the token is
  * not valid. Not just a boolean, because routes behind this need to know
  * *whose* session it is -- /api/feedback records which tester a correction
  * came from -- and *what* it can do -- /api/admin/* checks the role -- and
@@ -175,7 +175,7 @@ async function sessionInfo(secret, token) {
     if (!equalsConstantTime(signature, expected)) return null;
 
   // issueSession() escapes dots in the label, so the payload splits cleanly.
-  const [rawExpires, label, role] = payload.split(".");
+  const [rawExpires, label, role, name] = payload.split(".");
     const expires = Number(rawExpires);
     if (!Number.isFinite(expires) || expires <= Math.floor(Date.now() / 1000)) {
           return null;
@@ -186,7 +186,47 @@ async function sessionInfo(secret, token) {
           // as "user" rather than rejecting the token keeps testers signed in
           // through the upgrade instead of forcing everyone to log in again.
           role: role === "admin" ? "admin" : "user",
+          // Sessions issued before names were asked for carry no fourth field.
+          name: name ? decodeLabel(name) : "",
     };
+}
+
+/*
+ * The name or nickname a visitor types next to the code.
+ *
+ * The invite label says who a code was handed to; the name is what the person
+ * calls themselves, asked for now so that accounts can later be built on it
+ * without asking everyone again. Normalised so that one person typing it twice
+ * gets one row: NFC, control and format characters dropped, runs of spaces
+ * collapsed. Null when what is left is outside NAME_MIN..NAME_MAX characters.
+ */
+const NAME_MIN = 2;
+const NAME_MAX = 40;
+
+function cleanName(raw) {
+    const name = String(raw || "").normalize("NFC")
+          .replace(/[\p{Cc}\p{Cf}]/gu, "")
+          .replace(/\s+/gu, " ")
+          .trim();
+    const length = [...name].length;
+    return length >= NAME_MIN && length <= NAME_MAX ? name : null;
+}
+
+/*
+ * One row per invite and name: when it was first and last used to sign in,
+ * and how many times. The table may not exist yet on a deployment whose
+ * database has not had db/migrations/0003_members.sql applied, and a failure
+ * here must not keep anyone out -- same rule as the rate limiter.
+ */
+async function recordMember(db, invite, name) {
+    if (!db) return;
+    const now = new Date().toISOString();
+    try {
+          await db.prepare(
+                  "INSERT INTO members (invite, name, first_at, last_at, logins) VALUES (?, ?, ?, ?, 1) " +
+                  "ON CONFLICT (invite, name) DO UPDATE SET last_at = excluded.last_at, logins = logins + 1")
+            .bind(invite, name, now, now).run();
+    } catch (e) { /* no table yet, or D1 unavailable: sign in regardless */ }
 }
 
 /*
@@ -293,7 +333,7 @@ function escapeHtml(value) {
  * of minutes today. It is interpolated into HTML, and the next caller should not
  * have to know that to be safe.
  */
-function loginPage(message) {
+function loginPage(message, name = "") {
   const notice = message ? `<p class="error">${escapeHtml(message)}</p>` : "";
   return `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
@@ -338,9 +378,11 @@ form { width: min(100%, 26rem); padding: 2rem; background: var(--panel);
 h1 { margin: 0 0 .5rem; font-size: 1.35rem; letter-spacing: -.01em; }
 p { margin: 0 0 1.25rem; color: var(--muted); }
 .error { color: var(--err); }
+label { display: block; margin: .85rem 0 .35rem; font-size: 13px; font-weight: 600; color: var(--muted); }
 input { width: 100%; padding: .65rem .8rem; font: 15px ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .08em; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); border-radius: 8px; }
+#name { font-family: inherit; letter-spacing: normal; }
 button { margin-top: .85rem; width: 100%; padding: .65rem; font-size: .95rem; font-weight: 600;
   color: #fff; background: var(--accent); border: 1px solid var(--accent); border-radius: 8px;
   cursor: pointer; transition: background .15s; }
@@ -352,10 +394,14 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 <body>
 <form method="POST" action="/">
   <h1>Закрытое тестирование</h1>
-  <p>«Музыкальный сортир» пока доступен по приглашениям. Введите выданный код.</p>
+  <p>«Музыкальный сортир» пока доступен по приглашениям.</p>
   ${notice}
-  <input name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
-         placeholder="КОД ПРИГЛАШЕНИЯ" autofocus>
+  <label for="name">Имя или ник</label>
+  <input id="name" name="name" autocomplete="nickname" spellcheck="false" minlength="${NAME_MIN}"
+         maxlength="${NAME_MAX}" required value="${escapeHtml(name)}"${name ? "" : " autofocus"}>
+  <label for="code">Код приглашения</label>
+  <input id="code" name="code" autocomplete="off" autocapitalize="off" spellcheck="false"
+         placeholder="КОД ПРИГЛАШЕНИЯ" required${name ? " autofocus" : ""}>
   <button type="submit">Продолжить</button>
   <a class="back" href="/">← Что это за сервис</a>
 </form>
@@ -423,6 +469,7 @@ export async function onRequest(context) {
       // check above is the only place a session is ever trusted.
       context.data.invite = session.label;
           context.data.role = session.role;
+          context.data.name = session.name;
           return next();
     }
 
@@ -467,6 +514,19 @@ export async function onRequest(context) {
                 return htmlResponse(loginPage(""), 401);
         }
         const submitted = String(form.get("code") || "").trim().toUpperCase();
+        const typedName = String(form.get("name") || "");
+        const name = cleanName(typedName);
+
+      /*
+         * Asked before the code is looked at, and not counted as a failed
+         * attempt: it says nothing about whether the code is right, and a
+         * tester who left the box empty is not guessing.
+         */
+      if (name === null) {
+              return htmlResponse(loginPage(
+                      `Напишите имя или ник: от ${NAME_MIN} до ${NAME_MAX} символов.`,
+                      typedName.slice(0, NAME_MAX)), 400);
+      }
 
       let codes;
         try {
@@ -501,14 +561,15 @@ export async function onRequest(context) {
 
       if (!matched) {
               await recordLoginFailure(env.DB, ip);
-              return htmlResponse(loginPage("\u041a\u043e\u0434 \u043d\u0435 \u043f\u043e\u0434\u043e\u0448\u0451\u043b."), 401);
+              return htmlResponse(loginPage("\u041a\u043e\u0434 \u043d\u0435 \u043f\u043e\u0434\u043e\u0448\u0451\u043b.", name), 401);
       }
 
       // A tester who mistyped their own code a few times before getting it right
       // starts from a clean slate rather than carrying those failures around.
       await clearLoginFailures(env.DB, ip);
+      await recordMember(env.DB, matched.label, name);
 
-      const token = await issueSession(secret, matched.label, matched.role);
+      const token = await issueSession(secret, matched.label, matched.role, name);
         const response = new Response(null, { status: 303, headers: { Location: "/" } });
         response.headers.append("Set-Cookie",
                                       `${COOKIE_NAME}=${token}; Path=/; Max-Age=${SESSION_TTL_SECONDS}; ` +
