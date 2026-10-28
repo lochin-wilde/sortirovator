@@ -158,28 +158,24 @@ function keyCnnSpectrogram(y) {
   const filters = keyCnnFilterbank();
   const bands = filters.length;
   const out = new Float32Array(frames * bands);
-  const fft = getFFT(n);
   const window = new Float64Array(n);
   for (let i = 0; i < n; i++) window[i] = (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1))) * KEY_CNN_INT_SCALE;
-  const re = new Float64Array(n);
-  const im = new Float64Array(n);
   const mag = new Float64Array(n >> 1);
-  for (let t = 0; t < frames; t++) {
+  forEachSpectrum(frames, n, mag.length - 1, (t, frame) => {
     const start = t * KEY_CNN_HOP - (n >> 1);
     for (let i = 0; i < n; i++) {
       const idx = start + i;
-      re[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
-      im[i] = 0;
+      frame[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
     }
-    fft.transform(re, im, false);
-    for (let k = 0; k < mag.length; k++) mag[k] = Math.hypot(re[k], im[k]);
+  }, (t, re, im) => {
+    for (let k = 0; k < mag.length; k++) mag[k] = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
     for (let b = 0; b < bands; b++) {
       const { start: s, weights } = filters[b];
       let acc = 0;
       for (let j = 0; j < weights.length; j++) acc += mag[s + j] * weights[j];
       out[t * bands + b] = Math.log10(1 + acc);
     }
-  }
+  });
   return { frames, bands, data: out };
 }
 

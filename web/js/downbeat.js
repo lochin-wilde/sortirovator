@@ -23,7 +23,7 @@
  * per phase, softmax over the four, weights fitted on the train half against
  * Rekordbox's bars (tools/measure/measure_downbeat.mjs).
  *
- * Needs getFFT and hannPeriodic from dsp.js.
+ * Needs forEachSpectrum and hannPeriodic from dsp.js.
  */
 
 const DOWNBEAT_FFT = 4096;
@@ -41,10 +41,7 @@ const DOWNBEAT_FEATURES = 10;
 function downbeatFrames(y, sr) {
   const n = DOWNBEAT_FFT;
   const frames = Math.floor(y.length / DOWNBEAT_HOP);
-  const fft = getFFT(n);
   const window = hannPeriodic(n);
-  const re = new Float64Array(n);
-  const im = new Float64Array(n);
   const binHz = sr / n;
   const bandRanges = DOWNBEAT_BANDS.map(([lo, hi]) => [Math.max(1, Math.round(lo / binHz)), Math.min((n >> 1) - 1, Math.round(hi / binHz))]);
   const chromaLo = Math.ceil(DOWNBEAT_CHROMA_HZ[0] / binHz);
@@ -54,14 +51,14 @@ function downbeatFrames(y, sr) {
 
   const bands = [];
   const chroma = [];
-  for (let t = 0; t < frames; t++) {
+  const top = Math.max(chromaHi, ...bandRanges.map(([, hi]) => hi));
+  forEachSpectrum(frames, n, top, (t, out) => {
     const start = t * DOWNBEAT_HOP + (DOWNBEAT_HOP >> 1) - (n >> 1);
     for (let i = 0; i < n; i++) {
       const idx = start + i;
-      re[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
-      im[i] = 0;
+      out[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
     }
-    fft.transform(re, im, false);
+  }, (t, re, im) => {
     const b = new Float64Array(DOWNBEAT_BANDS.length);
     for (let j = 0; j < bandRanges.length; j++) {
       const [lo, hi] = bandRanges[j];
@@ -70,10 +67,10 @@ function downbeatFrames(y, sr) {
       b[j] = e / (hi - lo + 1);
     }
     const c = new Float64Array(12);
-    for (let k = chromaLo; k <= chromaHi; k++) c[pitchOf[k]] += Math.hypot(re[k], im[k]);
+    for (let k = chromaLo; k <= chromaHi; k++) c[pitchOf[k]] += Math.sqrt(re[k] * re[k] + im[k] * im[k]);
     bands.push(b);
     chroma.push(c);
-  }
+  });
   return { bands, chroma };
 }
 

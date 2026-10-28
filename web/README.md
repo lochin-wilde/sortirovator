@@ -548,19 +548,32 @@ itself. It is also among the cheapest, so that costs little.
 | Stage | Median |
 |---|---|
 | Key: the network | 1.32 s (was 1.92) |
-| Grid | 1.96 s: band envelopes 1.02, bar frames 0.55, whole-track tempo 0.32 |
-| Tempo | 0.81 s, of which the onset envelope 0.45 |
-| Loudness for normalization (true peak) | 1.33 s, only when normalizing |
+| Grid | 1.13 s (was 1.96): band envelopes 0.60, bar frames 0.27, whole-track tempo 0.19 |
+| Tempo | 0.52 s (was 0.81), of which the onset envelope 0.31 |
+| Loudness for normalization (true peak) | 1.34 s, only when normalizing |
 | Browse loudness | 0.07 s |
+
+Tempo, grid and key together: about 3.1 s per track, from 4.9 s before these
+two changes.
 
 The network's convolutions now sum four neighbouring outputs per pass, so each
 weight is read once for four of them; every output adds the same terms in the
 same order, and the probabilities are bit-identical (checked on 20 tracks and
-in the browser, where it went from 2.0 to 1.4 s). In the grid and the tempo
-nearly all the time is the FFT: a radix-2 transform per frame, about 21 000
-frames of 2048 for the band envelopes alone. Reordering its loops without
-changing a single operation saved only about 10% and was not kept; transforming
-two real frames in one complex FFT would halve it, but changes rounding.
+in the browser, where it went from 2.0 to 1.4 s).
+
+In the grid and the tempo nearly all the time was the FFT: a radix-2 transform
+per frame, about 21 000 frames of 2048 for the band envelopes alone. The signal
+is real, so two frames now go through one complex transform, one as the real
+part and one as the imaginary, and are pulled apart afterwards
+(`forEachSpectrum` in `dsp.js`). The tempogram pairs its inverse transforms the
+same way: a power spectrum is real and even, so both autocorrelations come out
+real. This changes rounding in the last digits, so it was checked against the
+old code on the whole library, 4523 tracks: tempo, mode, grid BPM, first beat,
+downbeat, whether the grid is written, key and key confidence came out the same
+on every one; the grid's confidence moved on two tracks, by 0.02 at most, both
+far below the threshold. `tools/test/test_spectra.mjs` compares the paired
+spectra with frame-by-frame ones. Reordering the FFT's loops without changing
+a single operation saved only about 10% and was not kept.
 
 ### A note on measuring this
 

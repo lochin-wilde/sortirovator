@@ -86,6 +86,46 @@ function getFFT(n) {
   return f;
 }
 
+/*
+ * The spectra of a run of real frames, two frames per complex FFT.
+ *
+ * Every frame here is real, so its spectrum is conjugate-symmetric and a
+ * complex FFT of one wastes half its work. Frame t goes in as the real part and
+ * frame t + 1 as the imaginary part; with Z the transform of that, frame t's
+ * spectrum is (Z[k] + conj Z[n-k]) / 2 and frame t + 1's is
+ * (Z[k] - conj Z[n-k]) / 2i. Half the transforms, the same spectra up to
+ * rounding (about 1e-16 of the larger frame's level).
+ *
+ * fill(t, out) writes frame t, windowed, into out (length n). visit(t, re, im)
+ * is called for every frame in order with its bins 0..top.
+ */
+function forEachSpectrum(frames, n, top, fill, visit) {
+  const fft = getFFT(n);
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  const aRe = new Float64Array(top + 1);
+  const aIm = new Float64Array(top + 1);
+  const bRe = new Float64Array(top + 1);
+  const bIm = new Float64Array(top + 1);
+  const mask = n - 1;
+  for (let t = 0; t < frames; t += 2) {
+    fill(t, re);
+    if (t + 1 < frames) fill(t + 1, im);
+    else im.fill(0);
+    fft.transform(re, im, false);
+    for (let k = 0; k <= top; k++) {
+      const m = (n - k) & mask;
+      const zr = re[k], zi = im[k], wr = re[m], wi = im[m];
+      aRe[k] = 0.5 * (zr + wr);
+      aIm[k] = 0.5 * (zi - wi);
+      bRe[k] = 0.5 * (zi + wi);
+      bIm[k] = 0.5 * (wr - zr);
+    }
+    visit(t, aRe, aIm);
+    if (t + 1 < frames) visit(t + 1, bRe, bIm);
+  }
+}
+
 function nextPow2(n) {
   let p = 1;
   while (p < n) p <<= 1;
@@ -212,22 +252,16 @@ function onsetStrength(y, sr, onProgress) {
 
   const filters = buildMelFilterbank(sr, nFft, nMels);
   const window = hannPeriodic(nFft);
-  const fft = getFFT(nFft);
-  const re = new Float64Array(nFft);
-  const im = new Float64Array(nFft);
   const frame = new Float64Array(nFft);
   const power = new Float64Array(nBins);
 
   const melDb = new Float32Array(nMels * frames);
   let globalMax = 1e-10;
 
-  for (let t = 0; t < frames; t++) {
+  forEachSpectrum(frames, nFft, nBins - 1, (t, out) => {
     readFrameCentered(y, t, nFft, hop, frame);
-    for (let i = 0; i < nFft; i++) {
-      re[i] = frame[i] * window[i];
-      im[i] = 0;
-    }
-    fft.transform(re, im, false);
+    for (let i = 0; i < nFft; i++) out[i] = frame[i] * window[i];
+  }, (t, re, im) => {
     for (let k = 0; k < nBins; k++) power[k] = re[k] * re[k] + im[k] * im[k];
 
     for (let m = 0; m < nMels; m++) {
@@ -239,7 +273,7 @@ function onsetStrength(y, sr, onProgress) {
       melDb[m * frames + t] = acc;
     }
     if (onProgress && (t & 1023) === 0) onProgress(t / frames);
-  }
+  });
 
   // power_to_db with ref=max and top_db=80.
   const refDb = 10 * Math.log10(Math.max(1e-10, globalMax));
@@ -352,31 +386,24 @@ function tempogramRanges(onsetEnv, sr, hop, winLength, ranges, onProgress) {
 
   const fftSize = nextPow2(winLength * 2);
   const fft = getFFT(fftSize);
+  const mask = fftSize - 1;
   const re = new Float64Array(fftSize);
   const im = new Float64Array(fftSize);
+  const powerA = new Float64Array(fftSize);
+  const powerB = new Float64Array(fftSize);
+  const ac = new Float64Array(winLength);
   const accumulators = ranges.map(() => new Float64Array(winLength));
   const counts = ranges.map(() => 0);
 
-  for (let t = 0; t < n; t++) {
-    re.fill(0);
-    im.fill(0);
-    for (let i = 0; i < winLength; i++) re[i] = padded[t + i] * acWindow[i];
-
-    fft.transform(re, im, false);
-    for (let k = 0; k < fftSize; k++) {
-      const p = re[k] * re[k] + im[k] * im[k];
-      re[k] = p;
-      im[k] = 0;
-    }
-    fft.transform(re, im, true);
-
-    // Fold the linear autocorrelation back into a circular one of length
-    // winLength, then normalize by the peak (librosa's norm=inf).
+  // Fold the linear autocorrelation `lin` back into a circular one of length
+  // winLength, normalize by the peak (librosa's norm=inf) and add it to every
+  // range that holds frame t.
+  const accumulate = (t, lin) => {
     let peak = 0;
     for (let k = 0; k < winLength; k++) {
-      const wrap = k === 0 ? 0 : re[winLength - k];
-      const v = (re[k] + wrap) / fftSize;
-      im[k] = v;
+      const wrap = k === 0 ? 0 : lin[winLength - k];
+      const v = (lin[k] + wrap) / fftSize;
+      ac[k] = v;
       const a = Math.abs(v);
       if (a > peak) peak = a;
     }
@@ -385,10 +412,39 @@ function tempogramRanges(onsetEnv, sr, hop, winLength, ranges, onProgress) {
         const range = ranges[rangeIndex];
         if (t < range[0] || t >= range[1]) continue;
         const target = accumulators[rangeIndex];
-        for (let k = 0; k < winLength; k++) target[k] += im[k] / peak;
+        for (let k = 0; k < winLength; k++) target[k] += ac[k] / peak;
         counts[rangeIndex]++;
       }
     }
+  };
+
+  /*
+   * Two frames per transform, both ways (see forEachSpectrum): frame t as the
+   * real part and t + 1 as the imaginary, split into their power spectra; those
+   * are real and even, so their inverse transforms are real, and both go back
+   * through one inverse FFT as its real and imaginary parts.
+   */
+  for (let t = 0; t < n; t += 2) {
+    const pair = t + 1 < n;
+    re.fill(0);
+    im.fill(0);
+    for (let i = 0; i < winLength; i++) re[i] = padded[t + i] * acWindow[i];
+    if (pair) for (let i = 0; i < winLength; i++) im[i] = padded[t + 1 + i] * acWindow[i];
+
+    fft.transform(re, im, false);
+    for (let k = 0; k < fftSize; k++) {
+      const m = (fftSize - k) & mask;
+      const ar = 0.5 * (re[k] + re[m]), ai = 0.5 * (im[k] - im[m]);
+      const br = 0.5 * (im[k] + im[m]), bi = 0.5 * (re[m] - re[k]);
+      powerA[k] = ar * ar + ai * ai;
+      powerB[k] = br * br + bi * bi;
+    }
+    re.set(powerA);
+    im.set(powerB);
+    fft.transform(re, im, true);
+
+    accumulate(t, re);
+    if (pair) accumulate(t + 1, im);
     if (onProgress && (t & 1023) === 0) onProgress(t / n);
   }
 

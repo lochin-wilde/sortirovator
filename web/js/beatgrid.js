@@ -71,23 +71,19 @@ function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_
     Math.min((n >> 1) - 1, Math.ceil((to * n) / sr)),
   ]);
   const top = Math.max(...ranges.map(([, hi]) => hi));
-  const fft = getFFT(n);
   const window = hannPeriodic(n);
-  const re = new Float64Array(n);
-  const im = new Float64Array(n);
   let prev = new Float64Array(top + 1);
   let cur = new Float64Array(top + 1);
   const envs = bands.map(() => new Float64Array(frames));
   const levels = withLevel ? bands.map(() => new Float64Array(frames)) : null;
-  for (let t = 0; t < frames; t++) {
+  forEachSpectrum(frames, n, top, (t, out) => {
     const start = t * hop - (n >> 1);
     for (let i = 0; i < n; i++) {
       const idx = start + i;
-      re[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
-      im[i] = 0;
+      out[i] = idx >= 0 && idx < y.length ? y[idx] * window[i] : 0;
     }
-    fft.transform(re, im, false);
-    for (let k = 1; k <= top; k++) cur[k] = Math.log1p(100 * Math.hypot(re[k], im[k]));
+  }, (t, re, im) => {
+    for (let k = 1; k <= top; k++) cur[k] = Math.log1p(100 * Math.sqrt(re[k] * re[k] + im[k] * im[k]));
     if (levels) {
       for (let b = 0; b < ranges.length; b++) {
         const [lo, hi] = ranges[b];
@@ -105,7 +101,7 @@ function bandOnsetEnvelopes(y, sr, bands = GRID_BANDS, n = GRID_FFT, hop = GRID_
       }
     }
     const swap = prev; prev = cur; cur = swap;
-  }
+  });
   return levels ? { flux: envs, level: levels } : envs;
 }
 
