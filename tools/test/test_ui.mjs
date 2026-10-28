@@ -18,7 +18,7 @@ const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${l
 
 const views = new Function(readFileSync("web/js/views.js", "utf8") +
   "return { PRESETS, matchPreset, parseCamelot, camelotRelation, tempoDistance, mixNeighbours, archiveTree, MIX_TEMPO_TOLERANCE," +
-  " keyConfidenceLevel, emptyColumns, primaryAction, unsavedWork, OPTIONAL_COLUMNS };")();
+  " keyConfidenceLevel, emptyColumns, primaryAction, unsavedWork, OPTIONAL_COLUMNS, batchPlan, secondsLeft };")();
 const html = readFileSync("web/index.html", "utf8");
 const appSrc = readFileSync("web/js/app.js", "utf8");
 const i18nSrc = readFileSync("web/js/i18n.js", "utf8");
@@ -230,6 +230,47 @@ check("в прогоне не осталось ожидания resume() без 
   }
   check("файлы декодирует decodeFile, а не контекст страницы напрямую",
     /audioBuffer = await decodeFile\(file\)/.test(appSrc) && !/decodeAudioData\(state\.audioContext, bytes\)/.test(appSrc));
+}
+
+/* ---------- Setup: what a batch will do ---------- */
+
+{
+  const all = { musicbrainz: true, discogs: true, lastfm: false };
+  const library = views.batchPlan({ fixNames: false, sort: true, bpmKey: true, loudness: false }, all);
+  check("«Разобрать библиотеку»: папки, теги, плейлисты",
+    JSON.stringify(library.archive) === JSON.stringify(["plan.folders", "plan.tags", "plan.playlists"]));
+  check("«Разобрать библиотеку»: жанры ищутся в Discogs, iTunes, MusicBrainz",
+    JSON.stringify(library.online) === JSON.stringify(["Discogs", "iTunes", "MusicBrainz"]));
+  check("только BPM и тональность — в интернет ничего не уходит",
+    views.batchPlan({ fixNames: false, sort: false, bpmKey: true, loudness: false }, all).online.length === 0);
+  check("названия без MusicBrainz — не ищутся нигде",
+    views.batchPlan({ fixNames: true, sort: false, bpmKey: false, loudness: false }, { musicbrainz: false, discogs: true, lastfm: true }).online.length === 0);
+  check("Last.fm назван только при ключе и сортировке",
+    views.batchPlan({ fixNames: false, sort: true, bpmKey: false, loudness: false }, { musicbrainz: false, discogs: false, lastfm: true }).online.join() === "Last.fm" &&
+    views.batchPlan({ fixNames: true, sort: false, bpmKey: false, loudness: false }, { musicbrainz: false, discogs: false, lastfm: true }).online.length === 0);
+  check("ничего не включено — архив пуст", views.batchPlan({ fixNames: false, sort: false, bpmKey: false, loudness: false }, all).archive.length === 0);
+  // Keys built in code are invisible to the data-i18n check further down.
+  const keys = ["plan.folders", "plan.tags", "plan.names", "plan.loudness", "plan.playlists",
+    ...["fixNames", "sort", "bpmKey", "loudness"].map((n) => "short." + n)];
+  const enTable = i18nSrc.slice(i18nSrc.indexOf("  en: {"), i18nSrc.indexOf("  ru: {"));
+  const ruTable = i18nSrc.slice(i18nSrc.indexOf("  ru: {"));
+  const lost = keys.filter((k) => !enTable.includes(`"${k}":`) || !ruTable.includes(`"${k}":`));
+  check("строки, собираемые в коде, есть на обоих языках" + (lost.length ? ": нет " + lost.join(", ") : ""), lost.length === 0);
+}
+
+check("время до конца: после одного трека не гадаем", views.secondsLeft(1, 10, 5) === null);
+check("время до конца: 2 трека за 20 с из 10 — ещё 80 с", views.secondsLeft(2, 10, 20) === 80);
+check("время до конца: пачка закончена — ничего", views.secondsLeft(10, 10, 60) === null);
+
+{
+  const aside = html.slice(html.indexOf('<aside class="setup-plan"'), html.indexOf("</aside>"));
+  check("кнопка запуска стоит в блоке «Что получится»", aside.includes('id="start"'));
+  check("секция результатов скрыта, пока нечего показать", /<section class="step" id="step-3" hidden>/.test(html));
+  check("сообщение о том, почему прогон не начался, открывает секцию результатов",
+    /closest\("\.step"\)/.test(cut("notify")) && /section\.hidden = false/.test(cut("notify")));
+  const tune = html.slice(html.indexOf('<details class="fine-tune"'), html.indexOf("</details>\n\n  <!-- Shown only while loudness"));
+  check("четыре переключателя и поиск свёрнуты в «Тонкую настройку»",
+    ["step-fix-names", "step-sort", "step-bpm-key", "step-loudness", 'data-slot="files"'].every((id) => tune.includes(id)));
 }
 
 /* ---------- The results table ---------- */

@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.6";
+const APP_VERSION = "2026.10.28.7";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -69,6 +69,7 @@ const state = {
   usedPaths: new Set(),
   producedCount: 0,
   downloaded: false, // the current archive has been saved at least once
+  batchStartedAt: 0, // Date.now() when the running batch began, for the time left
 };
 
 const el = (id) => document.getElementById(id);
@@ -132,6 +133,11 @@ const ui = {
   lookupsPanel: el("lookups-panel"),
   lookupsState: el("lookups-state"),
   presetCustom: el("preset-custom"),
+  fineTuneState: el("fine-tune-state"),
+  planArchive: el("plan-archive"),
+  planOnline: el("plan-online"),
+  planNoFiles: el("plan-no-files"),
+  fileProgressLine: el("file-progress-line"),
 };
 
 /* ------------------------------------------------------------------ */
@@ -184,6 +190,9 @@ function notify(key, values, target) {
   const line = target || ui.runStatus;
   line.textContent = t(key, values);
   line.hidden = false;
+  // The results section stays hidden until it has something to say.
+  const section = line.closest(".step");
+  if (section) section.hidden = false;
   log(t(key, values));
 }
 
@@ -337,6 +346,7 @@ function handleSelection(fileList) {
 
   ui.start.disabled = accepted.length === 0 || state.running;
   if (!state.running) ui.runStatus.hidden = true;
+  renderPlan();
   log(t("msg.selected", {
     count: accepted.length,
     skipped: wrongType.length + tooBig.length,
@@ -605,7 +615,14 @@ const STAGE_KEYS = {
 
 function setBatchProgress(done, total) {
   ui.batchBar.style.width = total > 0 ? (done / total) * 100 + "%" : "0%";
-  ui.batchCounter.textContent = done + " / " + total;
+  const left = state.running && state.batchStartedAt
+    ? secondsLeft(done, total, (Date.now() - state.batchStartedAt) / 1000) : null;
+  ui.batchCounter.textContent = done + " / " + total +
+    (left === null ? "" : " · " + t("progress.left", { time: formatDuration(left) }));
+}
+
+function formatDuration(seconds) {
+  return seconds < 90 ? t("time.sec", { n: Math.max(1, seconds) }) : t("time.min", { n: Math.round(seconds / 60) });
 }
 
 function setFileProgress(stage, value) {
@@ -1506,8 +1523,11 @@ async function runBatch() {
   state.usedPaths = new Set();
   state.producedCount = 0;
   state.downloaded = false;
+  state.batchStartedAt = Date.now();
   state.zip = new JSZip();
   updateRunButtons();
+  el("step-3").hidden = false;
+  ui.fileProgressLine.hidden = false;
 
   ui.start.disabled = true;
   ui.download.disabled = true;
@@ -1597,6 +1617,10 @@ async function runBatch() {
   ui.cancel.hidden = true;
   ui.start.disabled = state.files.length === 0;
   state.running = false;
+  // Done: the per-file bar has nothing left to show, and the counter drops its
+  // time estimate.
+  ui.fileProgressLine.hidden = true;
+  setBatchProgress(done, total);
 
   logRaw("");
   ui.download.disabled = state.producedCount === 0;
@@ -1715,6 +1739,7 @@ function resetBatch() {
 
   ui.fileSummary.hidden = true;
   ui.fileSummary.innerHTML = "";
+  renderPlan();
   ui.fileInput.value = "";
   ui.folderInput.value = "";
 
@@ -2162,15 +2187,35 @@ function syncStepsUi() {
   const steps = {};
   for (const name of Object.keys(stepSwitches)) steps[name] = stepSwitches[name].checked;
   const active = matchPreset(steps);
-  document.querySelectorAll(".chip[data-preset]").forEach((chip) => {
+  document.querySelectorAll("[data-preset]").forEach((chip) => {
     chip.setAttribute("aria-pressed", String(chip.dataset.preset === active));
   });
   ui.presetCustom.hidden = active !== null;
   ui.loudnessPanel.disabled = !ui.stepLoudness.checked;
   ui.loudnessPanel.hidden = !ui.stepLoudness.checked;
+  // The folded switches say which are on, so a preset can be checked without
+  // opening them.
+  const on = Object.keys(stepSwitches).filter((name) => steps[name]).map((name) => t("short." + name));
+  ui.fineTuneState.textContent = "— " + (on.length ? t("tune.on", { list: on.join(", ") }) : t("tune.none"));
+  renderPlan();
 }
 
-document.querySelectorAll(".chip[data-preset]").forEach((chip) => {
+/*
+ * The summary beside Start: what the archive will hold and what leaves the
+ * browser (views.js, batchPlan). Rewritten on every switch, lookup and file
+ * change, so it never describes a batch other than the one Start would run.
+ */
+function renderPlan() {
+  const options = readOptions();
+  const plan = batchPlan(options.steps, {
+    musicbrainz: options.useMusicbrainz, discogs: options.useDiscogs, lastfm: Boolean(options.lastfmKey),
+  });
+  ui.planArchive.textContent = plan.archive.length ? plan.archive.map((key) => t(key)).join(", ") : "—";
+  ui.planOnline.textContent = plan.online.length ? t("plan.ask", { list: plan.online.join(", ") }) : t("plan.askNone");
+  ui.planNoFiles.hidden = state.files.length > 0;
+}
+
+document.querySelectorAll("[data-preset]").forEach((chip) => {
   chip.addEventListener("click", () => {
     const preset = PRESETS.find((p) => p.id === chip.dataset.preset);
     if (!preset) return;
@@ -2192,6 +2237,7 @@ function syncLookupsState() {
   if (ui.lastfmKey.value.trim()) on.push("Last.fm");
   ui.lookupsState.textContent = on.length === 0 ? t("lookups.stateNone")
     : "— " + on.join(" · ") + (ui.lastfmKey.value.trim() ? "" : " " + t("lookups.stateNoKey"));
+  renderPlan();
 }
 [ui.useDiscogs, ui.useMusicbrainz].forEach((box) => box.addEventListener("change", syncLookupsState));
 ui.lastfmKey.addEventListener("input", syncLookupsState);
@@ -2320,6 +2366,7 @@ function initLanguage() {
       paint();
       // Text the page builds itself, rather than fills from data-i18n.
       syncLookupsState();
+      syncStepsUi();
       if (resultRows.length > 0) renderResults();
       if (!ui.archivePreview.hidden) renderArchivePreview();
       // The results table is already rendered, so its headers are re-read from
@@ -2371,6 +2418,9 @@ const versionBadge = el("app-version");
 if (versionBadge) versionBadge.textContent = "v" + APP_VERSION;
 
 initLanguage();
+// Lines the page writes itself, now in the language just chosen.
+syncLookupsState();
+syncStepsUi();
 /* ------------------------------------------------------------------ */
 /* Rekordbox collection: genres without touching the files             */
 /* ------------------------------------------------------------------ */

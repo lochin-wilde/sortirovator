@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Музыкальный сортир</title>
-<link rel="stylesheet" href="css/styles.css?v=2026.10.28.6">
+<link rel="stylesheet" href="css/styles.css?v=2026.10.28.7">
 </head>
 <body>
 
@@ -55,6 +55,11 @@
 
 <div class="mode-panel" id="mode-files-panel" role="tabpanel" aria-labelledby="mode-files">
 
+<!-- Setup on the left, what it will produce and the Start button on the
+     right; on a narrow screen the summary follows the settings. -->
+<div class="setup">
+<div class="setup-main">
+
 <section class="step" id="step-1">
   <h2><span class="step-number">1</span> <span data-i18n="step1.title"></span></h2>
   <div class="dropzone" id="dropzone">
@@ -74,13 +79,17 @@
   <h2><span class="step-number">2</span> <span data-i18n="step2.title"></span></h2>
 
   <div class="presets" role="group" data-i18n-aria="preset.label">
-    <button type="button" class="chip" data-preset="library" data-i18n="preset.library"></button>
-    <button type="button" class="chip" data-preset="everything" data-i18n="preset.everything"></button>
-    <button type="button" class="chip" data-preset="analyze" data-i18n="preset.analyze"></button>
-    <button type="button" class="chip" data-preset="genres" data-i18n="preset.genres"></button>
-    <span class="hint preset-custom" id="preset-custom" data-i18n="preset.custom" hidden></span>
+    <button type="button" class="preset-card" data-preset="library"><span class="preset-title" data-i18n="preset.library"></span><span class="preset-gives" data-i18n="preset.libraryGives"></span></button>
+    <button type="button" class="preset-card" data-preset="everything"><span class="preset-title" data-i18n="preset.everything"></span><span class="preset-gives" data-i18n="preset.everythingGives"></span></button>
+    <button type="button" class="preset-card" data-preset="analyze"><span class="preset-title" data-i18n="preset.analyze"></span><span class="preset-gives" data-i18n="preset.analyzeGives"></span></button>
+    <button type="button" class="preset-card" data-preset="genres"><span class="preset-title" data-i18n="preset.genres"></span><span class="preset-gives" data-i18n="preset.genresGives"></span></button>
   </div>
+  <p class="hint preset-custom" id="preset-custom" data-i18n="preset.custom" hidden></p>
 
+  <!-- The four switches and the lookups, folded: a preset sets them, and the
+       line it folds to says which are on. -->
+  <details class="fine-tune" id="fine-tune">
+  <summary><span data-i18n="tune.title"></span> <span class="fine-tune-state" id="fine-tune-state"></span></summary>
   <div class="options-grid">
     <label class="toggle"><input type="checkbox" id="step-fix-names"> <span data-i18n="step2.fixNames"></span>
       <em data-i18n="step2.fixNamesHint"></em></label>
@@ -91,6 +100,25 @@
     <label class="toggle"><input type="checkbox" id="step-loudness"> <span data-i18n="step2.loudness"></span>
       <em data-i18n="step2.loudnessHint"></em></label>
   </div>
+  <div class="lookups-slot" data-slot="files">
+    <!-- One set of lookup switches serves both modes: app.js moves this block
+         into whichever mode is showing, so a key typed in one is the key used
+         by the other. -->
+    <details class="panel lookups" id="lookups-panel">
+      <summary><span data-i18n="lookups.legend"></span> <span class="lookups-state" id="lookups-state"></span></summary>
+      <div class="field-row checkboxes">
+        <label><input type="checkbox" id="use-musicbrainz" checked> <span data-i18n="lookups.musicbrainz"></span></label>
+        <label><input type="checkbox" id="use-discogs" checked> <span data-i18n="lookups.discogs"></span></label>
+      </div>
+      <div class="field-row">
+        <label class="grow"><span data-i18n="lookups.lastfm"></span>
+          <input type="text" id="lastfm-key" data-i18n-placeholder="lookups.lastfmPlaceholder" autocomplete="off">
+        </label>
+      </div>
+      <p class="hint" data-i18n="lookups.hint"></p>
+    </details>
+  </div>
+  </details>
 
   <!-- Shown only while loudness is switched on: four settings that do nothing
        otherwise were a quarter of the page for most batches. -->
@@ -128,30 +156,28 @@
     </div>
   </fieldset>
 
-  <div class="lookups-slot" data-slot="files">
-    <!-- One set of lookup switches serves both modes: app.js moves this block
-         into whichever mode is showing, so a key typed in one is the key used
-         by the other. -->
-    <details class="panel lookups" id="lookups-panel">
-      <summary><span data-i18n="lookups.legend"></span> <span class="lookups-state" id="lookups-state"></span></summary>
-      <div class="field-row checkboxes">
-        <label><input type="checkbox" id="use-musicbrainz" checked> <span data-i18n="lookups.musicbrainz"></span></label>
-        <label><input type="checkbox" id="use-discogs" checked> <span data-i18n="lookups.discogs"></span></label>
-      </div>
-      <div class="field-row">
-        <label class="grow"><span data-i18n="lookups.lastfm"></span>
-          <input type="text" id="lastfm-key" data-i18n-placeholder="lookups.lastfmPlaceholder" autocomplete="off">
-        </label>
-      </div>
-      <p class="hint" data-i18n="lookups.hint"></p>
-    </details>
-  </div>
 </section>
 
-<section class="step" id="step-3">
-  <h2><span class="step-number">3</span> <span data-i18n="step3.title"></span></h2>
+</div>
+
+<aside class="setup-plan" aria-labelledby="plan-title">
+  <h2 id="plan-title" data-i18n="plan.title"></h2>
+  <dl class="plan-list">
+    <dt data-i18n="plan.archive"></dt><dd id="plan-archive"></dd>
+    <dt data-i18n="plan.online"></dt><dd id="plan-online"></dd>
+  </dl>
+  <p class="hint" data-i18n="plan.stats"></p>
+  <button type="button" class="button primary" id="start" disabled data-i18n="step3.start"></button>
+  <p class="hint" id="plan-no-files" data-i18n="plan.noFiles"></p>
+  <p class="hint" data-i18n="plan.keepTab"></p>
+</aside>
+</div>
+
+<!-- Hidden until there is something to show: a run, or a message about why one
+     did not start. -->
+<section class="step" id="step-3" hidden>
+  <h2 data-i18n="step3.title"></h2>
   <div class="run-bar">
-    <button type="button" class="button primary" id="start" disabled data-i18n="step3.start"></button>
     <button type="button" class="button" id="cancel" hidden data-i18n="step3.cancel"></button>
     <button type="button" class="button secondary" id="download" disabled data-i18n="step3.download"></button>
     <button type="button" class="button" id="reset" disabled data-i18n="step3.reset"></button>
@@ -167,7 +193,7 @@
       <div class="bar"><div class="bar-fill" id="batch-bar"></div></div>
       <span class="counter" id="batch-counter">0 / 0</span>
     </div>
-    <div class="progress-line">
+    <div class="progress-line" id="file-progress-line">
       <span id="file-label" data-i18n="step3.currentFile"></span>
       <div class="bar"><div class="bar-fill file" id="file-bar"></div></div>
       <span class="counter" id="file-stage"></span>
@@ -327,10 +353,10 @@
 
 <!-- jszip 3.10.1, served from our own origin: it handles every file the user
      loaded, so it is not a dependency to fetch from someone else's server. -->
-<script src="js/i18n.js?v=2026.10.28.6" defer></script>
-<script src="js/feedback.js?v=2026.10.28.6" defer></script>
-<script src="js/tags.js?v=2026.10.28.6" defer></script>
-<script src="js/views.js?v=2026.10.28.6" defer></script>
-<script src="js/app.js?v=2026.10.28.6" defer></script>
+<script src="js/i18n.js?v=2026.10.28.7" defer></script>
+<script src="js/feedback.js?v=2026.10.28.7" defer></script>
+<script src="js/tags.js?v=2026.10.28.7" defer></script>
+<script src="js/views.js?v=2026.10.28.7" defer></script>
+<script src="js/app.js?v=2026.10.28.7" defer></script>
 </body>
 </html>

@@ -67,12 +67,16 @@ evaluated whole. Pure logic therefore belongs in `identify.js`, `tags.js`,
 `rekordbox.js`, `dsp.js`, `views.js`, where it can be tested.
 
 **Page layout.** Two modes (`showMode` in `app.js`, remembered in localStorage, `#rekordbox`
-opens the second): *Process files* (drop zone → presets + switches → run, archive preview
-from the ZIP's own entries, click a track row for Camelot/tempo neighbours and the
-`describeResult` reasoning) and *Rekordbox collection*. The one lookups block
+opens the second): *Process files* (drop zone and preset cards, the four switches folded
+into "fine-tuning", beside them the `.setup-plan` summary with the Start button; then the
+results section, hidden until a run or a `notify()`: archive preview folded to one line,
+the table, click a track row for Camelot/tempo neighbours and the `describeResult`
+reasoning) and *Rekordbox collection*. The one lookups block
 (`#lookups-panel`) is physically moved into whichever mode is showing, so both read the
 same inputs. `views.js` holds the pure parts: `PRESETS`/`matchPreset`, `mixNeighbours`
-(standard Camelot moves, ±6% tempo, half/double time allowed), `archiveTree`. The
+(standard Camelot moves, ±6% tempo, half/double time allowed), `archiveTree`,
+`batchPlan` (what the summary says will be in the archive and go online), `secondsLeft`,
+and the table's `keyConfidenceLevel`/`emptyColumns`/`primaryAction`/`unsavedWork`. The
 developer log is hidden except on localhost or for an admin session; anything a user must
 read goes through `notify()` to a visible status line, not only to the log.
 

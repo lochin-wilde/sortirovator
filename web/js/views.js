@@ -186,6 +186,46 @@ function archiveTree(paths, playlistFolder) {
 }
 
 /* ------------------------------------------------------------------ */
+/* What a batch will do                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * What a batch with these switches puts in the archive and which services it
+ * may ask, for the summary beside the Start button. A service is named only
+ * where a lookup can happen: renaming asks iTunes and MusicBrainz, sorting
+ * asks every genre source that is switched on. Each item is a translation key,
+ * each service a name.
+ */
+function batchPlan(steps, lookups) {
+  const archive = [];
+  if (steps.sort) archive.push("plan.folders");
+  if (steps.bpmKey) archive.push("plan.tags");
+  if (steps.fixNames) archive.push("plan.names");
+  if (steps.loudness) archive.push("plan.loudness");
+  if (archive.length > 0) archive.push("plan.playlists");
+
+  const online = [];
+  const ask = (name) => { if (!online.includes(name)) online.push(name); };
+  if (steps.fixNames && lookups.musicbrainz) { ask("iTunes"); ask("MusicBrainz"); }
+  if (steps.sort) {
+    if (lookups.discogs) ask("Discogs");
+    if (lookups.musicbrainz) { ask("iTunes"); ask("MusicBrainz"); }
+    if (lookups.lastfm) ask("Last.fm");
+  }
+  return { archive, online };
+}
+
+/*
+ * Seconds left in a batch, from its pace so far. Nothing until two tracks are
+ * done: the first also pays for starting the workers and loading the key
+ * model, so it says little about the rest.
+ */
+function secondsLeft(done, total, elapsedSeconds) {
+  if (done < 2 || done >= total || !(elapsedSeconds > 0)) return null;
+  return Math.round((elapsedSeconds / done) * (total - done));
+}
+
+/* ------------------------------------------------------------------ */
 /* The results table                                                   */
 /* ------------------------------------------------------------------ */
 

@@ -606,6 +606,18 @@ speedup at all — because the browser pane was in the background and throttled.
 Timing anything in a hidden tab produces numbers that look plausible and are
 not. The figures above were taken with the window in front.
 
+## Setting up a batch
+
+The presets are cards that say what each one gives; the four switches they set
+are folded under "fine-tuning", whose line says which are on. Beside them, with
+the Start button, a summary of what the batch will produce and what leaves the
+browser: the services that will be asked for names or genres (only those that
+are switched on and that the chosen steps actually ask), and the anonymous
+count sent after the run. It is rebuilt on every switch and file change from
+`batchPlan` in `views.js`, so it describes the batch Start would run. While a
+batch runs, the counter adds the time left, from the pace of the tracks done
+so far, once two are done.
+
 ## Browsing a finished batch
 
 The results table sorts by any column and filters across name, artist, genre and
