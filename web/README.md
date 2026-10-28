@@ -805,6 +805,19 @@ On 200 tracks drawn at random it ends right on 99.0% against 82.0%. The lookup
 still turns a right name wrong now and then: twice in those 200, once by
 renaming a cover to the original it covers.
 
+Measured again with `tools/measure/measure_names.mjs` on another 200 at
+random, the tags read by the app's own reader (ffprobe gives only the first
+of several artists in a frame), the lookup turned 7 right names wrong: 5
+lost a featured artist that iTunes credits in the title -- "Come Back (feat.
+Eider) [Art of Tones Remix]" -- along with the store's version marker; one
+lost "(Intro Clean)", which was not read as a version; and "Phloem - Dance
+With You" became "AP Dhillon - With You" on an artist similarity of exactly
+0.5. The credit is now kept, Intro, Outro, Clean and Dirty are versions, and
+a match must share a word of the artist. Right names 94.0% -> 97.5%; the
+five left are three Rekordbox entries edited by hand ("Techno 1", a track
+number, "Milkshake 20") and two credits spelled differently: "ft." for
+"feat.", "&" for "feat.".
+
 **AcoustID, measured and not used.** Identifying the audio itself, by its
 Chromaprint fingerprint, found a recording for half of these tracks -- a DJ
 library is full of edits the database does not know -- and was right on 82-89%

@@ -696,6 +696,23 @@ const IDENTIFY_MIN_ARTIST_SIMILARITY = 0.5;
 const IDENTIFY_MIN_CORE_TITLE_SIMILARITY = 0.72;
 
 /*
+ * The artist threshold alone let "Phloem - Dance With You" become "AP Dhillon -
+ * With You": 0.5 on letters shared by chance. A real match names at least one
+ * artist on both sides, so a word of one must appear in the other. Read without
+ * spaces and punctuation, since stores write "SubLiminal" where a tag has
+ * "Sub:liminal", and in Latin letters, so a Cyrillic answer to a transliterated
+ * query still counts. Of 121 tracks the lookup renamed, it rejects only that one.
+ */
+function artistsShareWord(a, b) {
+  const words = (text) => normalizeForCompare(toAscii(String(text || ""))).split(/\s+/).filter((w) => w.length >= 2);
+  const wa = words(a);
+  const wb = words(b);
+  const ja = wa.join("");
+  const jb = wb.join("");
+  return wa.some((w) => jb.includes(w)) || wb.some((w) => ja.includes(w));
+}
+
+/*
  * Strips version markers -- "(Extended Mix)", "- Radio Edit", "feat. X" -- to
  * leave the title itself.
  *
@@ -707,7 +724,12 @@ const IDENTIFY_MIN_CORE_TITLE_SIMILARITY = 0.72;
  * title, and the file was renamed to the wrong song. With the markers removed
  * the same comparison is "Everyday VIP" vs "ANITA", which fails immediately.
  */
-const VERSION_MARKERS = /\b(extended|original|radio|club|instrumental|acoustic|live|remaster(ed)?|remix|rmx|edit|mix|version|dub|bootleg|rework|vip|mashup|flip|refix|redrum)\b/i;
+/*
+ * "Intro", "Clean" and "Dirty" are DJ-pool versions ("Intro Clean", "Dirty
+ * Intro"). Missing here, "Русская Девушка (Intro Clean)" was not seen to have a
+ * version and was renamed to the plain song.
+ */
+const VERSION_MARKERS = /\b(extended|original|radio|club|instrumental|acoustic|live|remaster(ed)?|remix|rmx|edit|mix|version|dub|bootleg|rework|vip|mashup|flip|refix|redrum|intro|outro|clean|dirty)\b/i;
 
 /*
  * Splits a title into the song and the version it is.
@@ -832,7 +854,24 @@ function mergeTitleVersion(originalTitle, matchedTitle) {
   if (matched.version && textSimilarity(original.version, matched.version) >= 0.9) {
     return matchedTitle;
   }
-  return (matched.core + " " + original.version).trim();
+  /*
+   * The version is the file's, but a featured artist is the store's to keep.
+   * iTunes credits the singer in the title -- "Come Back (feat. Eider) [Art of
+   * Tones Remix]" under the artist "Sebb Junior" -- so replacing the matched
+   * version wholesale dropped the singer from the name: 5 of 200 tracks.
+   */
+  const credit = FEATURED_CREDIT.test(original.version) ? "" : featuredCredit(matchedTitle);
+  return [matched.core, credit, original.version].filter(Boolean).join(" ");
+}
+
+const FEATURED_CREDIT = /\b(feat\.?|ft\.?|featuring)(\s|$)/i;
+
+// "(feat. Eider)" out of a title, or "" if it credits nobody.
+function featuredCredit(title) {
+  const bracketed = String(title || "").match(/[([]\s*(?:feat\.?|ft\.?|featuring)\s+[^)\]]+[)\]]/i);
+  if (bracketed) return "(" + bracketed[0].slice(1, -1).trim() + ")";
+  const bare = String(title || "").match(/\s(?:feat\.?|ft\.?|featuring)\s+[^([]+/i);
+  return bare ? "(" + bare[0].trim() + ")" : "";
 }
 
 /*
@@ -1131,6 +1170,7 @@ async function tryIdentify(artist, track) {
     if (coreSimilarity < IDENTIFY_MIN_CORE_TITLE_SIMILARITY) continue;
     if (titleSimilarity < IDENTIFY_MIN_TITLE_SIMILARITY) continue;
     if (artistSimilarity < IDENTIFY_MIN_ARTIST_SIMILARITY) continue;
+    if (!artistsShareWord(artist, canonicalArtist)) continue;
 
     const combined = coreSimilarity * 2 + titleSimilarity + artistSimilarity;
     if (combined > bestCombined) {
@@ -1174,6 +1214,7 @@ async function tryIdentifyItunes(artist, track) {
     if (coreSimilarity < IDENTIFY_MIN_CORE_TITLE_SIMILARITY) continue;
     if (titleSimilarity < IDENTIFY_MIN_TITLE_SIMILARITY) continue;
     if (artistSimilarity < IDENTIFY_MIN_ARTIST_SIMILARITY) continue;
+    if (!artistsShareWord(artist, canonicalArtist)) continue;
 
     const combined = coreSimilarity * 2 + titleSimilarity + artistSimilarity;
     if (combined > bestCombined) {
