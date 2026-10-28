@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.10";
+const APP_VERSION = "2026.10.28.11";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -756,6 +756,8 @@ async function processFile(file, options, slot) {
     artistSimilarity: null,
     viaTransliteration: false,
     lookupError: null,
+    identifyAttempted: false,
+    namedFromTags: null,
     nameChanges: null,
     cleanedName: null,
     maybeTransliterated: false,
@@ -808,10 +810,18 @@ async function processFile(file, options, slot) {
   result.feedbackArtist = artist || null;
   result.feedbackTitle = track || null;
 
-  if (options.steps.fixNames && options.useMusicbrainz && parsed.artist && parsed.track) {
+  /*
+   * The lookup is fed the artist and title chosen above -- the tags first. It
+   * used to be fed the filename parse, against what the comment above says, so
+   * a "Title - Artist" name was looked up the wrong way round: on 200 such names
+   * from the owner's library it fixed 1, and fed from the tags it fixes 177.
+   */
+  let match = null;
+  if (options.steps.fixNames && options.useMusicbrainz && artist && track) {
     setFileProgress("lookup", 0.1);
     ui.fileStage.textContent = t("stage.identifying");
-    const match = await identifyTrack(parsed.artist, parsed.track);
+    result.identifyAttempted = true;
+    match = await identifyTrack(artist, track);
     if (match) {
       // Keep the file's own version marker: the lookup matched on the song, so
       // the recording it found is often a different mix of it.
@@ -833,6 +843,15 @@ async function processFile(file, options, slot) {
       result.feedbackTitle = track;
     } else {
       result.lookupError = takeLookupError();
+    }
+  }
+  // Nothing found online, or lookups off: a file whose tags name it is named
+  // from them rather than left with a name that may be the wrong way round.
+  if (options.steps.fixNames && !match) {
+    const fromTags = nameFromTags(tags.artist, tags.title);
+    if (fromTags && fromTags !== stem) {
+      stem = fromTags;
+      result.namedFromTags = fromTags;
     }
   }
 
@@ -1050,6 +1069,9 @@ function describeResult(result) {
       title: result.titleSimilarity,
       artist: result.artistSimilarity,
     }) + (result.viaTransliteration ? t("res.viaCyrillic") : ""));
+  } else if (result.namedFromTags) {
+    // "Not found online" only when it was looked for: with lookups off, it was not.
+    lines.push(t(result.identifyAttempted ? "res.namedFromTags" : "res.namedFromTagsOffline", { name: result.namedFromTags }));
   } else if (result.identifyAttempted) {
     lines.push(result.lookupError
       ? t("res.lookupFailed", { message: result.lookupError })

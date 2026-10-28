@@ -477,8 +477,8 @@ The gate is 0.50. Correct answers average 0.687 and wrong ones 0.492, so the
 score carries real information, but the distributions overlap and no threshold
 separates them cleanly. At 0.50, 90 of 103 correct answers are marked confident
 and 19 of 27 wrong ones are demoted. Nothing is discarded either way — a weak
-result is shown as `8A?` with its score, because a labelled guess beats a blank
-field when you are checking a set.
+result is shown with one amber dot of three and its score in the tooltip,
+because a labelled guess beats a blank field when you are checking a set.
 
 **Analysis window is capped at 120 seconds.** The Python version analyses the
 whole file for BPM and key. Both are stable well inside that window and the cap
@@ -787,6 +787,31 @@ library rather than from intuition. Stripping a leading number as a track index
 looked obvious and turned out to be destructive: both filenames matching that
 pattern were real titles, `4 x 4 - JUJO` and `2 OU - 3 Robots`. Years, `Vol. 44`,
 `Pt.1` and `202 bpm` also occur in genuine titles and are left alone.
+
+### Looking a name up, and naming from the tags
+
+"Fix names" looks the track up on iTunes, then MusicBrainz, with the artist and
+title from the file's tags, the filename only behind them. Until October 2026
+it sent the filename parse instead, against what its own comment said, so a
+"Title - Artist" name was searched the wrong way round. If nothing is found,
+or lookups are off, a file whose tags name it is named "Artist - Title" from
+them.
+
+Measured on the owner's library, where Rekordbox's artist and title match the
+files' tags on every one of the 386 tracks checked: of 200 files whose name did
+not read as that artist and title (13.6% of the 3877 labelled tracks), the old
+path fixed 1; the new one 198 -- 177 through the lookup, 21 more from the tags.
+On 200 tracks drawn at random it ends right on 99.0% against 82.0%. The lookup
+still turns a right name wrong now and then: twice in those 200, once by
+renaming a cover to the original it covers.
+
+**AcoustID, measured and not used.** Identifying the audio itself, by its
+Chromaprint fingerprint, found a recording for half of these tracks -- a DJ
+library is full of edits the database does not know -- and was right on 82-89%
+of those; with its answer checked against the filename, 29% of the broken
+names. Where the file has tags it adds nothing to the lookup above; it could
+only help a file with neither a usable name nor tags, and would send a
+fingerprint of every track to acoustid.org. Not built.
 
 ### Russian written in Latin script
 

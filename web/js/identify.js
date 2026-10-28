@@ -1583,6 +1583,21 @@ function sanitizeFilename(text) {
   return text.replace(FILENAME_UNSAFE_CHARS, "").trim();
 }
 
+/*
+ * "Artist - Title" from the file's own tags, or null when either is missing or
+ * a placeholder (usableTag). Used to name a file when no lookup found it: the
+ * tags are what a DJ program shows -- on the owner's library Rekordbox's names
+ * matched them on every one of 386 tracks -- while a name like "Title - Artist"
+ * or "artist_title_web" stays wrong if left alone. A title that repeats the
+ * artist in front loses the repeat (withoutArtistPrefix).
+ */
+function nameFromTags(tagArtist, tagTitle) {
+  const artist = usableTag(tagArtist);
+  const title = artist ? withoutArtistPrefix(usableTag(tagTitle), artist) : null;
+  if (!artist || !title) return null;
+  return sanitizeFilename(artist + " - " + title) || null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Genre resolution                                                    */
 /* ------------------------------------------------------------------ */
