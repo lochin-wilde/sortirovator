@@ -363,6 +363,20 @@ and 89.8% good; at 0.76, 73.8% and 88.6%. And most half-beat errors remain:
 where one phase is good, the wrong one is still picked on 9.2% of held-out
 tracks, against 11.2% before the shape.
 
+**Beat This!, measured and not used.** The neural beat tracker of Foscarin,
+Schlüter and Widmer (ISMIR 2024; code and weights MIT) was run on 600 held-out
+tracks, 542 of them with a one-tempo Rekordbox grid, and scored the same way
+(`tools/measure/compare_beat_this.mjs`, `beat_this_run.py`). A constant grid
+fitted through its beats is good on 73.1% of them, against 80.3% for ours
+(McNemar 67 to 28): most of its misses count every other beat of a 140 BPM
+track. Moved to our tempo's octave, its phase is good on 83.4% (16 to 33,
+chi² 5.2). But the gain is where we write no grid: there 74.9% against 64.8%,
+still well below the 90% that writing a grid asks for, and where both grids
+agree on such a track only 78.8% are good. On the grids we write it is 89.2%
+against 90.7%, and the bar starts right on 83.3% against 86.4%. It costs an
+80 MB model per visitor and 3.4–5 s a track on a CPU through PyTorch, against
+1.65 s for our tempo and grid. Not worth carrying for what it adds.
+
 **Bars.** `js/downbeat.js` picks which of the first four beats starts a bar:
 per beat, eight band energies and a chroma; per candidate phase, how much they
 change across the beat and the bar it would start, on average and at the

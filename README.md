@@ -129,6 +129,7 @@ node tools/measure/grid_tempo.mjs --rescore          # seconds, scores the tempo
 node tools/measure/grid_halfbeat.mjs                 # ~1.5 h, saves the beat's shape and bars on both half-beat phases
 node tools/measure/grid_halfbeat.mjs --fit           # ~4 min, refits half-beat and confidence models, scores the shipped ones
 node tools/measure/profile_stages.mjs --limit 40     # ~5 min, where each track's analysis time goes, per stage
+node tools/measure/compare_beat_this.mjs --pick 600  # then beat_this_run.py in its own venv (~40 min), then the script on its output: Beat This! vs our grid
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 min, network-bound
 ```
 

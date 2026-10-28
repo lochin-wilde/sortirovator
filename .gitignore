@@ -7,6 +7,7 @@ secrets.json
 
 # Virtualenvs and caches — rebuildable, and large.
 .venv/
+.venv-*/
 venv/
 __pycache__/
 .pycache/

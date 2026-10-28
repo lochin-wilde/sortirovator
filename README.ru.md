@@ -129,6 +129,7 @@ node tools/measure/grid_tempo.mjs --rescore          # секунды, оцен�
 node tools/measure/grid_halfbeat.mjs                 # ~1,5 ч, сохраняет форму доли и такты на обеих фазах полдоли
 node tools/measure/grid_halfbeat.mjs --fit           # ~4 мин, переобучает выбор полдоли и уверенность, оценивает отгружаемые
 node tools/measure/profile_stages.mjs --limit 40     # ~5 мин, на что уходит время анализа трека, по этапам
+node tools/measure/compare_beat_this.mjs --pick 600  # затем beat_this_run.py в своём окружении (~40 мин), затем скрипт на его выходе: Beat This! против нашей сетки
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 мин, упирается в сеть
 ```
 
