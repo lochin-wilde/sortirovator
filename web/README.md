@@ -1005,6 +1005,14 @@ Italo-Disco, Gangsta, Ragga and others). Words other sources use for anything
 Halftime, which sits between drum and bass and dubstep; that last call was
 made looking at the model's answers on the same 375 tracks.
 
+Measured again on those 375 tracks without Last.fm, against the September run
+without it: exact 64 -> 76 (17.1% -> 20.3%; 15 tracks gained, 3 lost, McNemar
+6.7), the drum and bass folder 3 -> 16 of 25. Of the 23 answers that changed,
+16 were "Drum n Bass" now read as Drum & Bass. One loss is the change's own: a
+jungle record whose Discogs styles name both now lands on Drum & Bass. The
+other two, and the remaining changes, are the services' data having moved
+since September.
+
 ## Browser support
 
 - **Folder selection** uses `webkitdirectory`, which iOS Safari does not
