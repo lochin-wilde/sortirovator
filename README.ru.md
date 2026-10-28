@@ -128,6 +128,7 @@ node tools/measure/grid_tempo.mjs                    # ~75 мин, темп се
 node tools/measure/grid_tempo.mjs --rescore          # секунды, оценивает правила темпа по этой выгрузке
 node tools/measure/grid_halfbeat.mjs                 # ~1,5 ч, сохраняет форму доли и такты на обеих фазах полдоли
 node tools/measure/grid_halfbeat.mjs --fit           # ~4 мин, переобучает выбор полдоли и уверенность, оценивает отгружаемые
+node tools/measure/profile_stages.mjs --limit 40     # ~5 мин, на что уходит время анализа трека, по этапам
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 мин, упирается в сеть
 ```
 

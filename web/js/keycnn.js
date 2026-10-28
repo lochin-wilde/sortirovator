@@ -201,29 +201,55 @@ function keyCnnPad(x, width) {
   return { t, f, c: x.c, data };
 }
 
+/*
+ * A valid convolution. Four neighbouring outputs along frequency are summed in
+ * one pass: they read the same weights, so each weight is loaded once for four
+ * multiply-adds instead of one. Every output still adds its terms in the same
+ * order, rounding to float32 after each, so the result is bit for bit what one
+ * output at a time gives. (Skipping zero inputs, as that version did, changes
+ * nothing either: adding 0 * w leaves a sum as it was.)
+ */
 function keyCnnConv(x, layer) {
   const { cin, cout, kh, kw, w } = layer;
   const t = x.t - kh + 1;
   const f = x.f - kw + 1;
   const out = new Float32Array(Math.max(0, t * f * cout));
-  const acc = new Float32Array(cout);
+  const acc = new Float32Array(4 * cout);
   const xd = x.data;
+  const xf = x.f;
+  const c1 = cout, c2 = 2 * cout, c3 = 3 * cout;
   for (let ti = 0; ti < t; ti++) {
-    for (let fi = 0; fi < f; fi++) {
+    for (let fi = 0; fi < f; fi += 4) {
+      const n = Math.min(4, f - fi);
       acc.fill(0);
       for (let i = 0; i < kh; i++) {
         for (let j = 0; j < kw; j++) {
-          const inBase = ((ti + i) * x.f + (fi + j)) * cin;
+          const inBase = ((ti + i) * xf + (fi + j)) * cin;
           const wBase = (i * kw + j) * cin * cout;
           for (let c = 0; c < cin; c++) {
-            const v = xd[inBase + c];
-            if (v === 0) continue;
             const wRow = wBase + c * cout;
-            for (let o = 0; o < cout; o++) acc[o] += v * w[wRow + o];
+            if (n === 4) {
+              const v0 = xd[inBase + c];
+              const v1 = xd[inBase + cin + c];
+              const v2 = xd[inBase + 2 * cin + c];
+              const v3 = xd[inBase + 3 * cin + c];
+              for (let o = 0; o < cout; o++) {
+                const wv = w[wRow + o];
+                acc[o] += v0 * wv;
+                acc[c1 + o] += v1 * wv;
+                acc[c2 + o] += v2 * wv;
+                acc[c3 + o] += v3 * wv;
+              }
+            } else {
+              for (let p = 0; p < n; p++) {
+                const v = xd[inBase + p * cin + c];
+                for (let o = 0; o < cout; o++) acc[p * cout + o] += v * w[wRow + o];
+              }
+            }
           }
         }
       }
-      out.set(acc, (ti * f + fi) * cout);
+      out.set(n === 4 ? acc : acc.subarray(0, n * cout), (ti * f + fi) * cout);
     }
   }
   return { t: Math.max(0, t), f: Math.max(0, f), c: cout, data: out };

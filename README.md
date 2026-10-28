@@ -128,6 +128,7 @@ node tools/measure/grid_tempo.mjs                    # ~75 min, grid tempo over 
 node tools/measure/grid_tempo.mjs --rescore          # seconds, scores the tempo rules on that dump
 node tools/measure/grid_halfbeat.mjs                 # ~1.5 h, saves the beat's shape and bars on both half-beat phases
 node tools/measure/grid_halfbeat.mjs --fit           # ~4 min, refits half-beat and confidence models, scores the shipped ones
+node tools/measure/profile_stages.mjs --limit 40     # ~5 min, where each track's analysis time goes, per stage
 LASTFM_KEY=… node tools/measure/measure_genre.mjs --per-folder 25   # ~40 min, network-bound
 ```
 

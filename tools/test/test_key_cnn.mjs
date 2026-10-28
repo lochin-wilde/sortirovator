@@ -130,6 +130,34 @@ check("класс 23 — G# minor -> 1A", api.keyCnnClassToCamelot(23) === "1A")
 
 /* ---------- report ---------- */
 
+/* ---------- Convolution, several outputs per pass ---------- */
+{
+  // One output at a time, as the port first did it: the reference the faster
+  // keyCnnConv must match bit for bit. Widths 9 and 7 leave a tail of one and
+  // three outputs after the blocks of four.
+  const naive = (x, { cin, cout, kh, kw, w }) => {
+    const t = x.t - kh + 1, f = x.f - kw + 1, out = new Float32Array(t * f * cout), acc = new Float32Array(cout);
+    for (let ti = 0; ti < t; ti++) for (let fi = 0; fi < f; fi++) {
+      acc.fill(0);
+      for (let i = 0; i < kh; i++) for (let j = 0; j < kw; j++) for (let c = 0; c < cin; c++) {
+        const v = x.data[((ti + i) * x.f + fi + j) * cin + c];
+        for (let o = 0; o < cout; o++) acc[o] += v * w[((i * kw + j) * cin + c) * cout + o];
+      }
+      out.set(acc, (ti * f + fi) * cout);
+    }
+    return out;
+  };
+  let seed = 3;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
+  for (const [t, f, cin, cout] of [[6, 11, 3, 5], [5, 9, 2, 4]]) {
+    const layer = { cin, cout, kh: 3, kw: 3, w: Float32Array.from({ length: 9 * cin * cout }, rnd) };
+    const x = { t, f, c: cin, data: Float32Array.from({ length: t * f * cin }, (_, k) => (k % 7 === 0 ? 0 : rnd())) };
+    const got = api.keyCnnConv(x, layer).data, want = naive(x, layer);
+    check(`свёртка блоками по четыре совпадает с поэлементной до бита (ширина выхода ${f - 2})`,
+      got.length === want.length && got.every((v, k) => Object.is(v, want[k])));
+  }
+}
+
 const failed = results.filter((line) => line.includes("МИМО"));
 console.log(results.join("\n"));
 console.log(`\nпройдено ${results.length - failed.length}/${results.length}`);

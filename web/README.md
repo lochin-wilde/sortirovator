@@ -542,6 +542,26 @@ Decoding stays on the main thread because `decodeAudioData` is unavailable
 inside a worker on Safari, so it is the one stage that cannot overlap with
 itself. It is also among the cheapest, so that costs little.
 
+**Where the time goes now** (`tools/measure/profile_stages.mjs`, 40 tracks of
+3.9 minutes on average, one at a time in Node; decoding not included):
+
+| Stage | Median |
+|---|---|
+| Key: the network | 1.32 s (was 1.92) |
+| Grid | 1.96 s: band envelopes 1.02, bar frames 0.55, whole-track tempo 0.32 |
+| Tempo | 0.81 s, of which the onset envelope 0.45 |
+| Loudness for normalization (true peak) | 1.33 s, only when normalizing |
+| Browse loudness | 0.07 s |
+
+The network's convolutions now sum four neighbouring outputs per pass, so each
+weight is read once for four of them; every output adds the same terms in the
+same order, and the probabilities are bit-identical (checked on 20 tracks and
+in the browser, where it went from 2.0 to 1.4 s). In the grid and the tempo
+nearly all the time is the FFT: a radix-2 transform per frame, about 21 000
+frames of 2048 for the band envelopes alone. Reordering its loops without
+changing a single operation saved only about 10% and was not kept; transforming
+two real frames in one complex FFT would halve it, but changes rounding.
+
 ### A note on measuring this
 
 The first parallel measurements were nonsense — 2 workers appeared to give no
