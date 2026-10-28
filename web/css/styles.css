@@ -327,6 +327,62 @@ input[type="text"], input[type="number"], select {
   .progress-line > span:first-child { flex-basis: 68px; }
 }
 
+/* Phones: the button that matters now, pinned to the bottom. */
+.action-bar { display: none; }
+@media (max-width: 640px) {
+  body { padding-bottom: 6rem; }
+  .action-bar {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    padding: 0.7rem 1rem max(0.9rem, env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+  }
+  .action-bar .button { width: 100%; min-height: 48px; font-size: 1rem; }
+  /* The pinned copy does the job; the one in the summary would be a second Start. */
+  .setup-plan #start { display: none; }
+
+  /* The results table as cards: file name and key, then the artist, then
+     genre, tempo and loudness. Sorting needs the header, so it is desktop only. */
+  .results { min-width: 0; }
+  .results thead { display: none; }
+  .results, .results tbody { display: block; }
+  .results tbody { display: flex; flex-direction: column; gap: 0.5rem; }
+  .results tr.track-row {
+    display: grid;
+    grid-template-columns: auto auto auto 1fr auto;
+    gap: 0.25rem 0.8rem;
+    align-items: baseline;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel-2);
+  }
+  .results tr.track-row.open { border-color: var(--accent); }
+  .results tr.track-row td { display: block; padding: 0; border: 0; }
+  /* Outranks the table's hover and open-row shading, which would paint each field. */
+  .results tbody tr.track-row td,
+  .results tbody tr.track-row:hover td,
+  .results tbody tr.track-row.open td { background: none; }
+  .results td.name { grid-column: 1 / 5; grid-row: 1; max-width: none; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .results td.c-key { grid-column: 5; grid-row: 1; }
+  .results td.c-artist { grid-column: 1 / -1; grid-row: 2; color: var(--muted); }
+  .results td.c-artist.is-empty { display: none; }
+  .results td.c-genre { grid-row: 3; }
+  .results td.c-bpm { grid-row: 3; white-space: nowrap; }
+  .results td.c-bpm::after { content: " BPM"; color: var(--muted); }
+  .results td.c-bpm .drift { display: inline; margin-left: 0.3rem; }
+  .results td.c-loudness { grid-row: 3; color: var(--muted); white-space: nowrap; }
+  .results td.c-output { display: none; }
+  .sort-hint { display: none; }
+  .results tr.detail-row { display: block; margin-top: -0.3rem; }
+  .results tr.detail-row td { display: block; border: 1px solid var(--accent); border-top: 0; border-radius: 0 0 10px 10px; }
+}
+
 /* ------------------------------------------------------------------ */
 /* Language switch                                                      */
 /* ------------------------------------------------------------------ */

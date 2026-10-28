@@ -19,7 +19,7 @@ const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${l
 const views = new Function(readFileSync("web/js/views.js", "utf8") +
   "return { PRESETS, matchPreset, parseCamelot, camelotRelation, tempoDistance, mixNeighbours, archiveTree, MIX_TEMPO_TOLERANCE," +
   " keyConfidenceLevel, emptyColumns, primaryAction, unsavedWork, OPTIONAL_COLUMNS, batchPlan, secondsLeft," +
-  " needsCheck, matchQuery, tableCsv };")();
+  " needsCheck, matchQuery, tableCsv, barAction };")();
 const html = readFileSync("web/index.html", "utf8");
 const appSrc = readFileSync("web/js/app.js", "utf8");
 const i18nSrc = readFileSync("web/js/i18n.js", "utf8");
@@ -376,6 +376,25 @@ check("блок архива свёрнут в одну строку, поясн
     cut("panelHtml").includes("player-slot") && cut("renderResults").includes("player-slot"));
   check("новая пачка и очистка закрывают трек и плеер", (appSrc.match(/clearTrackPanel\(\);/g) || []).length === 2);
   check("файл трека запоминается для плеера", /resultFiles\.set\(result, file\)/.test(appSrc));
+}
+
+/* ---------- Phones ---------- */
+
+check("кнопка внизу телефона: до прогона — «Начать»", views.barAction({ running: false, produced: 0 }) === "start");
+check("во время прогона — «Отмена»", views.barAction({ running: true, produced: 3 }) === "cancel");
+check("после прогона — «Скачать ZIP»", views.barAction({ running: false, produced: 6 }) === "download");
+{
+  const files = html.slice(html.indexOf('id="mode-files-panel"'), html.indexOf('id="mode-rekordbox-panel"'));
+  check("закреплённая кнопка живёт в режиме файлов и прячется вместе с ним", files.includes('id="action-bar"'));
+  const sync = cut("syncActionBar");
+  check("она повторяет подпись, доступность и нажатие настоящей кнопки",
+    /textContent = actionTarget\.textContent/.test(sync) && /disabled = actionTarget\.disabled/.test(sync) &&
+    /actionTarget\.click\(\)/.test(appSrc) && /new MutationObserver\(syncActionBar\)/.test(appSrc));
+  const css = readFileSync("web/css/styles.css", "utf8");
+  const phone = css.slice(css.indexOf("/* Phones: the button that matters now"));
+  check("на телефоне таблица становится карточками без заголовка",
+    /\.results thead \{ display: none; \}/.test(phone) && /tr\.track-row \{\s*display: grid;/.test(phone));
+  check("на компьютере закреплённой кнопки нет", /^\.action-bar \{ display: none; \}$/m.test(css));
 }
 
 /* ---------- Translations ---------- */

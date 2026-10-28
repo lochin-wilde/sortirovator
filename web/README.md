@@ -653,6 +653,15 @@ player is one element moved into each new panel rather than rebuilt; moving a
 playing element in one step does not stop it, and a track can be listened to
 while the rest of the batch runs.
 
+On a phone the table becomes cards -- file name and key, the artist, then
+genre, tempo and loudness -- and the button that matters now is pinned to the
+bottom of the screen: Start, Cancel while a batch runs, Download once there is
+an archive. It mirrors the real button (`syncActionBar` in `app.js` watches
+the real ones and passes the click on inside the same gesture, so the audio
+unlock still counts), and the summary's own Start is hidden there so there are
+not two. Sorting by column needs the table's header, so on a phone the order
+is the order the tracks finished in.
+
 Loudness is measured for **every** track, not only when normalization is on.
 That became affordable by splitting the measurement in two: the table's figure
 comes from the mono downmix already being transferred for tempo analysis and

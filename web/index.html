@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Музыкальный сортир</title>
-<link rel="stylesheet" href="css/styles.css?v=2026.10.28.8">
+<link rel="stylesheet" href="css/styles.css?v=2026.10.28.9">
 </head>
 <body>
 
@@ -233,7 +233,7 @@
     <span class="hint" id="table-count"></span>
     <button type="button" class="button small" id="table-csv" data-i18n="table.csv"></button>
   </div>
-  <p class="hint table-hint" id="table-hint" data-i18n="table.rowHint" hidden></p>
+  <p class="hint table-hint" id="table-hint" hidden><span data-i18n="table.rowHint"></span> <span class="sort-hint" data-i18n="table.sortHint"></span></p>
 
   <!-- On a wide screen the open track gets a panel beside the table; on a
        narrow one it opens as a row under the track (app.js, renderResults). -->
@@ -273,6 +273,13 @@
     <pre id="log"></pre>
   </details>
 </section>
+
+<!-- Phones only: the button that matters now, pinned to the bottom of the
+     screen, since Start and Download are otherwise screens away. It presses
+     the real button (app.js, syncActionBar). -->
+<div class="action-bar" id="action-bar">
+  <button type="button" class="button primary" id="action-bar-button"></button>
+</div>
 
 </div>
 
@@ -364,10 +371,10 @@
 
 <!-- jszip 3.10.1, served from our own origin: it handles every file the user
      loaded, so it is not a dependency to fetch from someone else's server. -->
-<script src="js/i18n.js?v=2026.10.28.8" defer></script>
-<script src="js/feedback.js?v=2026.10.28.8" defer></script>
-<script src="js/tags.js?v=2026.10.28.8" defer></script>
-<script src="js/views.js?v=2026.10.28.8" defer></script>
-<script src="js/app.js?v=2026.10.28.8" defer></script>
+<script src="js/i18n.js?v=2026.10.28.9" defer></script>
+<script src="js/feedback.js?v=2026.10.28.9" defer></script>
+<script src="js/tags.js?v=2026.10.28.9" defer></script>
+<script src="js/views.js?v=2026.10.28.9" defer></script>
+<script src="js/app.js?v=2026.10.28.9" defer></script>
 </body>
 </html>

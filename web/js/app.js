@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.8";
+const APP_VERSION = "2026.10.28.9";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -104,6 +104,7 @@ const ui = {
   tableTools: el("table-tools"),
   tableFilter: el("table-filter"),
   tableCsv: el("table-csv"),
+  actionBarButton: el("action-bar-button"),
   trackPanel: el("track-panel"),
   resultsArea: el("results-area"),
   tableCount: el("table-count"),
@@ -1197,7 +1198,7 @@ function resultCells(result, index) {
     : "—";
 
   return '<td class="name" title="' + escapeHtml(result.name) + '">' + escapeHtml(result.name) + (result.error ? " ⚠" : "") + "</td>" +
-    '<td class="c-artist">' + escapeHtml(result.feedbackArtist || "—") + "</td>" +
+    '<td class="c-artist' + (result.feedbackArtist ? "" : " is-empty") + '">' + escapeHtml(result.feedbackArtist || "—") + "</td>" +
     '<td class="genre-cell c-genre">' + genreCell + "</td>" +
     '<td class="c-bpm">' + bpmCellHtml(result) + "</td>" +
     '<td class="c-key">' + keyCellHtml(result) + "</td>" +
@@ -2453,6 +2454,30 @@ ui.cancel.addEventListener("click", () => {
 });
 
 ui.download.addEventListener("click", downloadZip);
+
+/*
+ * The pinned phone button mirrors whichever real button is the one to press
+ * (views.js, barAction): its label, its disabled state, and its click, which
+ * is passed on inside the same user gesture so the audio unlock still counts.
+ * Watching the real buttons keeps it right without touching every place that
+ * enables, relabels or hides them.
+ */
+const actionButtons = { start: ui.start, download: ui.download, cancel: ui.cancel };
+let actionTarget = ui.start;
+
+function syncActionBar() {
+  const action = barAction({ running: state.running, produced: state.producedCount });
+  actionTarget = actionButtons[action];
+  ui.actionBarButton.textContent = actionTarget.textContent;
+  ui.actionBarButton.disabled = actionTarget.disabled;
+  ui.actionBarButton.classList.toggle("primary", action !== "cancel");
+}
+
+for (const button of Object.values(actionButtons)) {
+  new MutationObserver(syncActionBar).observe(button, { attributes: true, childList: true, characterData: true, subtree: true });
+}
+ui.actionBarButton.addEventListener("click", () => actionTarget.click());
+syncActionBar();
 
 // The archive exists only in this tab: closing it mid-batch, or before the
 // ZIP was saved, asks first. Browsers show their own wording for this.

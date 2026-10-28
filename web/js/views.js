@@ -273,6 +273,14 @@ function primaryAction(run) {
 }
 
 /*
+ * The one button pinned to the bottom of a phone screen: Cancel while a batch
+ * runs, otherwise whichever of Start and Download is the main button.
+ */
+function barAction(run) {
+  return run.running ? "cancel" : primaryAction(run);
+}
+
+/*
  * Whether leaving the page now loses work: a batch still running, or an
  * archive that was built and never downloaded. The archive lives only in this
  * tab's memory.

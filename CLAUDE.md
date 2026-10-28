@@ -72,7 +72,9 @@ into "fine-tuning", beside them the `.setup-plan` summary with the Start button;
 results section, hidden until a run or a `notify()`: archive preview folded to one line,
 search and the all/check/mix views, the table; a clicked track opens in `#track-panel`
 beside it on wide screens or in a row under it, with one `<audio>` element kept across
-redraws (`placePlayer`), its Camelot/tempo neighbours and the `describeResult` reasoning) and *Rekordbox collection*. The one lookups block
+redraws (`placePlayer`), its Camelot/tempo neighbours and the `describeResult` reasoning;
+under 640px the table is cards and `#action-bar` pins Start/Cancel/Download, mirroring
+the real button via `syncActionBar`) and *Rekordbox collection*. The one lookups block
 (`#lookups-panel`) is physically moved into whichever mode is showing, so both read the
 same inputs. `views.js` holds the pure parts: `PRESETS`/`matchPreset`, `mixNeighbours`
 (standard Camelot moves, ±6% tempo, half/double time allowed), `archiveTree`,
