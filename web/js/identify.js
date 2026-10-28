@@ -1693,9 +1693,14 @@ async function resolveGenreFrom(context, deps) {
      * not consulted at all -- not skipped in favour of a better answer, but
      * excluded, because its answer is confidently wrong.
      *
-     * The remix's own release is tried first: Discogs often has it, catalogued
-     * under the remixer with its own style. Only if that fails do we fall back
-     * to what the remixer is generally known for.
+     * Only the remix's own release answers: Discogs often has it, catalogued
+     * under the remixer with its own style. What the remixer is generally
+     * known for used to come next, from their Last.fm and MusicBrainz artist
+     * tags. Measured on 375 folder-filed tracks it answered 40 times, right
+     * 7 times and wrong 24: a remixer sharing a name with a metal or folk act
+     * (Ghast, Philia, Kyle Watson), or a career that is not this record. The
+     * owner's call: a blank genre beats a guessed one, since key, tempo and a
+     * readable name are what the file is for.
      */
     if (remixer) {
       const core = splitTitle(track).core;
@@ -1708,22 +1713,10 @@ async function resolveGenreFrom(context, deps) {
           source: 'Discogs style "' + fromRemixRelease.tag + '" for the ' + remixer + ' remix',
         };
       }
-      if (options.lastfmKey) {
-        const fromRemixer = await lastfmArtistGenre(remixer, options.lastfmKey, genresMap);
-        if (fromRemixer) {
-          return { genre: fromRemixer.genre, source: 'Last.fm tag "' + fromRemixer.tag + '" for remixer ' + remixer, weak: true };
-        }
-      }
-      if (options.useMusicbrainz) {
-        const fromRemixerMb = await musicbrainzArtistGenre(remixer, genresMap);
-        if (fromRemixerMb) {
-          return { genre: fromRemixerMb.genre, source: 'MusicBrainz tag "' + fromRemixerMb.tag + '" for remixer ' + remixer, weak: true };
-        }
-      }
       /*
-       * Nothing known about the remixer. Falling through to the original artist
-       * from here would reintroduce exactly the Aerosmith answer, so the audio
-       * fallback at the bottom of this function is the better outcome.
+       * Nothing on the remix itself. Falling through to the original artist
+       * from here would reintroduce exactly the Aerosmith answer, so the remix
+       * goes on to the file's own tag, iTunes' store genre, then Unknown.
        */
     } else {
       /*

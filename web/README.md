@@ -180,7 +180,7 @@ top-level README has the commands.
 |---|---|---|
 | **Tempo** | 4459 | **93.4%** within ±1 BPM; a further 3.5% are a clean multiple — double, half, 4/3 — that a DJ reads through |
 | **Key** | 4523 | **66.3%** exact, **85.3%** exact, relative or one step round the Camelot wheel — the network in `js/keycnn.js`. On GiantSteps-key, 604 tracks keyed by listeners: **67.5%** exact |
-| **Genre** | 375, 25 per folder | **24.0%** exact, 12.0% a related genre, 30.9% an honest blank |
+| **Genre** | 375, 25 per folder | **22.9%** exact, 10.4% a related genre, 39.2% an honest blank, 27.5% wrong |
 
 **Read these per folder, not only in total.** The averages move with what the
 library contains. Between two runs a month apart, key accuracy rose from 59.4%
@@ -916,9 +916,11 @@ silently reported as "no match".
 nothing to say:
 
 1. **The user's own correction** — nothing overrules what they fixed by hand.
-2. **A remix goes to the remixer**: Discogs for the remix release itself, then
-   the remixer's Last.fm and MusicBrainz tags. The original artist is not
-   consulted at all.
+2. **A remix goes to its own release on Discogs**, catalogued under the
+   remixer. The original artist is not consulted at all, and neither is what
+   the remixer is generally known for: their Last.fm and MusicBrainz artist
+   tags were right 7 times of 40 on the 375 folder-filed tracks. With nothing
+   on the remix, the file tag, iTunes or a blank.
 3. **Discogs** — per-release styles, the finest-grained source there is. A
    Hip-Hop answer is split into old and new by the earliest release year.
 4. **MusicBrainz recording tags.**
@@ -1046,6 +1048,14 @@ only without (z = 2.71). The weak spot it shows is stage 2: 44 answers came
 from a remixer, 8 of them exact and 26 wrong -- a remixer sharing a name with
 a metal or folk act on MusicBrainz, or a version word ("Extended", "'Baile'")
 read as part of the remixer's name.
+
+Those stages were then removed: a remix is answered by its own release on
+Discogs or not at all, the owner's call being that a blank beats a guess.
+Replayed on the same run (only those 40 answers change, and they now go to
+the file tag or Unknown, which needs no lookup): exact 90 -> 86, wrong 124 ->
+103, blank 116 -> 147. Of the 7 exact answers lost, most were drum and bass
+and UK garage remixers whose Last.fm tag happened to fit; of the 24 wrong
+ones removed, Grime and Moombahton folders lose all of theirs.
 
 ## Browser support
 
