@@ -186,6 +186,62 @@ function archiveTree(paths, playlistFolder) {
 }
 
 /* ------------------------------------------------------------------ */
+/* The results table                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * How sure the key is, as one of three steps the table draws as dots. The
+ * table used to print "4A? (0.14)", and the number read as part of the key.
+ *
+ * 1 is below the worker's own threshold, the old "?"; 3 is KEY_HIGH_CONFIDENCE
+ * and up. Against Rekordbox on 4523 tracks the key matched exactly on 39% of
+ * level 1 (27% of tracks), 58% of level 2 (20%) and 83% of level 3 (53%).
+ */
+const KEY_HIGH_CONFIDENCE = 0.7;
+
+function keyConfidenceLevel(result) {
+  if (!result || !result.key) return 0;
+  if (!result.keyConfident) return 1;
+  return typeof result.keyConfidence === "number" && result.keyConfidence >= KEY_HIGH_CONFIDENCE ? 3 : 2;
+}
+
+/*
+ * Columns with nothing in them on any row of the batch: genres when they were
+ * not looked up, tempo and key when they were not measured. A column of
+ * dashes says nothing and pushes the rest off a phone screen.
+ */
+const OPTIONAL_COLUMNS = {
+  artist: (r) => Boolean(r.feedbackArtist),
+  genre: (r) => Boolean(r.genre),
+  bpm: (r) => typeof r.bpm === "number",
+  key: (r) => Boolean(r.key),
+  loudness: (r) => typeof r.browseLufs === "number",
+};
+
+function emptyColumns(rows) {
+  if (!rows || rows.length === 0) return [];
+  return Object.keys(OPTIONAL_COLUMNS).filter((column) => !rows.some((row) => OPTIONAL_COLUMNS[column](row)));
+}
+
+/*
+ * Which of Start and Download is the button to press. Once a batch has put
+ * files in the archive, downloading it is the next step; pressing Start again
+ * would analyse the same files twice.
+ */
+function primaryAction(run) {
+  return !run.running && run.produced > 0 ? "download" : "start";
+}
+
+/*
+ * Whether leaving the page now loses work: a batch still running, or an
+ * archive that was built and never downloaded. The archive lives only in this
+ * tab's memory.
+ */
+function unsavedWork(run) {
+  return Boolean(run.running || (run.produced > 0 && !run.downloaded));
+}
+
+/* ------------------------------------------------------------------ */
 /* The usage count                                                     */
 /* ------------------------------------------------------------------ */
 

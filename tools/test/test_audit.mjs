@@ -34,11 +34,14 @@ const constant = (path, name) => {
 };
 
 const app = lift("web/js/app.js");
+const views = lift("web/js/views.js");
 const escapeHtml = (s) => String(s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const A = new Function("escapeHtml", "t", [
   constant("web/js/app.js", "CAMELOT_KEY"),
   constant("web/js/app.js", "TRUE_PEAK_CEILING_DB"),
+  constant("web/js/views.js", "KEY_HIGH_CONFIDENCE"), views("keyConfidenceLevel"),
+  app("keyCellHtml"), app("bpmCellHtml"),
   app("camelotOrder"), app("resultCells"), app("sortValue"), app("safeGainDb"),
   "return { resultCells, sortValue, safeGainDb };",
 ].join("\n"))(escapeHtml, (key) => key);

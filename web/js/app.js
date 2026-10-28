@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.5";
+const APP_VERSION = "2026.10.28.6";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -68,6 +68,7 @@ const state = {
   cancelRequested: false,
   usedPaths: new Set(),
   producedCount: 0,
+  downloaded: false, // the current archive has been saved at least once
 };
 
 const el = (id) => document.getElementById(id);
@@ -1134,15 +1135,33 @@ function addResultRow(result) {
   renderResults();
 }
 
-function resultCells(result, index) {
-  const keyText = result.key
-    ? (result.keyConfident ? result.key : result.key + "?") +
-      (result.keyConfidence !== null ? " (" + result.keyConfidence.toFixed(2) + ")" : "")
-    : "—";
+// The key and three dots for how sure it is (views.js, keyConfidenceLevel);
+// the number itself is in the dots' tooltip and in the details under the row.
+function keyCellHtml(result) {
+  if (!result.key) return "—";
+  const level = keyConfidenceLevel(result);
+  const label = t("table.keyConf" + level);
+  const title = result.keyConfidence !== null && result.keyConfidence !== undefined
+    ? label + " · " + result.keyConfidence.toFixed(2) : label;
+  return '<span class="key-cell">' + escapeHtml(result.key) +
+    '<span class="key-conf level-' + level + '" role="img" aria-label="' + escapeHtml(label) +
+    '" title="' + escapeHtml(title) + '"><i></i><i></i><i></i></span></span>';
+}
+
+// A tempo that changes through the track says so in words; it used to be a
+// "~" after the number, which nothing explained.
+function bpmCellHtml(result) {
   // A file that failed never gets a bpm field at all, so it is undefined rather
   // than null -- and `undefined === null` is false, which printed "undefined".
-  const bpmText = result.bpm === null || result.bpm === undefined ? "—"
-    : result.bpmMode === "dynamic" ? result.bpm + "~" : String(result.bpm);
+  if (result.bpm === null || result.bpm === undefined) return "—";
+  if (result.bpmMode !== "dynamic") return escapeHtml(String(result.bpm));
+  const range = result.bpmMin !== null && result.bpmMin !== undefined && result.bpmMax !== null && result.bpmMax !== undefined
+    ? t("table.driftRange", { min: result.bpmMin, max: result.bpmMax }) : t("table.drift");
+  return escapeHtml(String(result.bpm)) + '<span class="drift" title="' + escapeHtml(range) + '">' +
+    escapeHtml(t("table.drift")) + "</span>";
+}
+
+function resultCells(result, index) {
   const loudnessText = result.browseLufs !== null && result.browseLufs !== undefined
     ? result.browseLufs.toFixed(1) + " LUFS"
     : "—";
@@ -1157,11 +1176,11 @@ function resultCells(result, index) {
     : "—";
 
   return '<td class="name">' + escapeHtml(result.name) + (result.error ? " ⚠" : "") + "</td>" +
-    "<td>" + escapeHtml(result.feedbackArtist || "—") + "</td>" +
-    '<td class="genre-cell">' + genreCell + "</td>" +
-    "<td>" + escapeHtml(bpmText) + "</td>" +
-    "<td>" + escapeHtml(keyText) + "</td>" +
-    "<td>" + escapeHtml(loudnessText) + "</td>" +
+    '<td class="c-artist">' + escapeHtml(result.feedbackArtist || "—") + "</td>" +
+    '<td class="genre-cell c-genre">' + genreCell + "</td>" +
+    '<td class="c-bpm">' + bpmCellHtml(result) + "</td>" +
+    '<td class="c-key">' + keyCellHtml(result) + "</td>" +
+    '<td class="c-loudness">' + escapeHtml(loudnessText) + "</td>" +
     '<td class="name muted">' + escapeHtml(result.outputPath || "—") + "</td>";
 }
 
@@ -1211,6 +1230,7 @@ function renderResults() {
     })
     .join("");
   ui.results.hidden = resultRows.length === 0;
+  ui.results.dataset.hide = emptyColumns(resultRows).join(" ");
   ui.tableTools.hidden = resultRows.length === 0;
   ui.tableHint.hidden = resultRows.length === 0;
   ui.feedbackBlock.hidden = resultRows.length === 0;
@@ -1485,7 +1505,9 @@ async function runBatch() {
   state.cancelRequested = false;
   state.usedPaths = new Set();
   state.producedCount = 0;
+  state.downloaded = false;
   state.zip = new JSZip();
+  updateRunButtons();
 
   ui.start.disabled = true;
   ui.download.disabled = true;
@@ -1580,6 +1602,7 @@ async function runBatch() {
   ui.download.disabled = state.producedCount === 0;
   ui.reset.disabled = false;
   ui.resetHint.hidden = state.producedCount === 0;
+  updateRunButtons();
   if (state.producedCount > 0) {
     const playlists = writePlaylists(options);
     if (playlists > 0) {
@@ -1633,12 +1656,23 @@ function renderArchivePreview() {
   const playlists = tree.folders.find((folder) => folder.playlists);
   const tracks = paths.length - (playlists ? playlists.files.length : 0);
   const folders = tree.folders.length - (playlists ? 1 : 0);
-  ui.archiveSummary.textContent = t("archive.summary", {
-    tracks, folders, playlists: playlists ? playlists.files.length : 0,
-  });
   ui.archiveTree.innerHTML = html;
   ui.archivePreview.hidden = false;
   renderGridExport();
+  // The grid settings are inside the folded block; the line it folds to says so.
+  ui.archiveSummary.textContent = "— " + t("archive.summary", {
+    tracks, folders, playlists: playlists ? playlists.files.length : 0,
+  }) + (ui.gridExport && !ui.gridExport.hidden ? " · " + t("archive.gridHere") : "");
+}
+
+/*
+ * One of Start and Download is drawn as the main button (views.js,
+ * primaryAction): Start until a batch has filled an archive, Download after.
+ */
+function updateRunButtons() {
+  const primary = primaryAction({ running: state.running, produced: state.producedCount });
+  ui.start.classList.toggle("primary", primary === "start");
+  ui.download.classList.toggle("primary", primary === "download");
 }
 
 /*
@@ -1658,6 +1692,7 @@ function resetBatch() {
   state.files = [];
   state.usedPaths = new Set();
   state.producedCount = 0;
+  state.downloaded = false;
   state.cancelRequested = false;
 
   ui.resultsBody.innerHTML = "";
@@ -1687,6 +1722,7 @@ function resetBatch() {
   ui.reset.disabled = true;
   ui.resetHint.hidden = true;
   ui.start.disabled = true;
+  updateRunButtons();
 
   logRaw("");
   notify("msg.cleared");
@@ -2090,6 +2126,7 @@ async function downloadZip() {
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+    state.downloaded = true;
     log(t("msg.archiveWritten", { size: (blob.size / (1024 * 1024)).toFixed(1) }));
   } catch (e) {
     notify("msg.archiveFailed", { message: e.message });
@@ -2225,6 +2262,14 @@ ui.cancel.addEventListener("click", () => {
 });
 
 ui.download.addEventListener("click", downloadZip);
+
+// The archive exists only in this tab: closing it mid-batch, or before the
+// ZIP was saved, asks first. Browsers show their own wording for this.
+window.addEventListener("beforeunload", (event) => {
+  if (!unsavedWork({ running: state.running, produced: state.producedCount, downloaded: state.downloaded })) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
 // Remembered between visits: the archive usually goes to the same place.
 try {

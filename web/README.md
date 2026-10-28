@@ -613,6 +613,19 @@ key at once. It is redrawn from the stored results rather than from the DOM, so
 BPM and loudness sort numerically instead of as text, where `-9.5` would come
 after `-13.7`.
 
+How sure the key is shows as three dots, not as "4A? (0.14)", where the number
+read as part of the key. One dot (amber) is below the worker's threshold, three
+is a confidence of 0.7 and up; against Rekordbox on 4523 tracks the key matched
+exactly on 39%, 58% and 83% of tracks at one, two and three dots. The number is
+in the tooltip and in the details under the row. A tempo that changes says
+"drifts" under the number, with the range in the tooltip.
+
+A column nothing in the batch filled -- genres when they were not looked up --
+is hidden instead of showing a dash on every row. Once the archive is built,
+Download becomes the main button, and closing the tab before it is saved asks
+first: the archive exists only in the tab's memory. What will be in the archive
+is folded to one line above the table, with the grid settings inside it.
+
 Loudness is measured for **every** track, not only when normalization is on.
 That became affordable by splitting the measurement in two: the table's figure
 comes from the mono downmix already being transferred for tempo analysis and

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Музыкальный сортир</title>
-<link rel="stylesheet" href="css/styles.css?v=2026.10.28.5">
+<link rel="stylesheet" href="css/styles.css?v=2026.10.28.6">
 </head>
 <body>
 
@@ -174,23 +174,28 @@
     </div>
   </div>
 
-  <div class="archive-preview" id="archive-preview" hidden>
-    <h3 data-i18n="archive.title"></h3>
-    <p class="hint archive-summary" id="archive-summary"></p>
+  <!-- Folded to one line: open, it is half a screen of folders and grid
+       settings, and it used to sit between the run's status and its results. -->
+  <details class="archive-preview" id="archive-preview" hidden>
+    <summary><span class="archive-title" data-i18n="archive.title"></span> <span class="archive-summary" id="archive-summary"></span></summary>
+    <p class="hint" data-i18n="archive.openFolder"></p>
     <div class="archive-tree" id="archive-tree"></div>
     <div class="grid-export" id="grid-export" hidden>
       <label class="toggle"><input type="checkbox" id="grid-serato"> <span data-i18n="grid.toggle"></span></label>
       <p class="hint" id="grid-summary"></p>
-      <p class="hint" data-i18n="grid.accuracy"></p>
       <label class="toggle grid-rekordbox"><input type="checkbox" id="grid-rekordbox" disabled> <span data-i18n="grid.rb.toggle"></span>
         <em data-i18n="grid.rb.folderLabel"></em>
         <input type="text" id="grid-rekordbox-folder" data-i18n-placeholder="grid.rb.placeholder" autocomplete="off" spellcheck="false">
       </label>
       <p class="hint" id="grid-rekordbox-note"></p>
-      <p class="hint" data-i18n="grid.rb.how"></p>
-      <p class="hint" data-i18n="grid.cdj"></p>
+      <details class="grid-help">
+        <summary data-i18n="grid.help"></summary>
+        <p class="hint" data-i18n="grid.accuracy"></p>
+        <p class="hint" data-i18n="grid.rb.how"></p>
+        <p class="hint" data-i18n="grid.cdj"></p>
+      </details>
     </div>
-  </div>
+  </details>
 
   <div class="table-tools" id="table-tools" hidden>
     <input type="search" id="table-filter" data-i18n-placeholder="table.filterPlaceholder" autocomplete="off">
@@ -203,11 +208,11 @@
       <thead>
         <tr>
           <th class="sortable" data-sort="name" data-i18n="table.file"></th>
-          <th class="sortable" data-sort="artist" data-i18n="table.artist"></th>
-          <th class="sortable" data-sort="genre" data-i18n="table.genre"></th>
-          <th class="sortable" data-sort="bpm" data-i18n="table.bpm"></th>
-          <th class="sortable" data-sort="key" data-i18n="table.key"></th>
-          <th class="sortable" data-sort="loudness" data-i18n="table.loudness" data-i18n-title="table.loudnessHint"></th>
+          <th class="sortable c-artist" data-sort="artist" data-i18n="table.artist"></th>
+          <th class="sortable c-genre" data-sort="genre" data-i18n="table.genre"></th>
+          <th class="sortable c-bpm" data-sort="bpm" data-i18n="table.bpm"></th>
+          <th class="sortable c-key" data-sort="key" data-i18n="table.key"></th>
+          <th class="sortable c-loudness" data-sort="loudness" data-i18n="table.loudness" data-i18n-title="table.loudnessHint"></th>
           <th data-i18n="table.output"></th>
         </tr>
       </thead>
@@ -322,10 +327,10 @@
 
 <!-- jszip 3.10.1, served from our own origin: it handles every file the user
      loaded, so it is not a dependency to fetch from someone else's server. -->
-<script src="js/i18n.js?v=2026.10.28.5" defer></script>
-<script src="js/feedback.js?v=2026.10.28.5" defer></script>
-<script src="js/tags.js?v=2026.10.28.5" defer></script>
-<script src="js/views.js?v=2026.10.28.5" defer></script>
-<script src="js/app.js?v=2026.10.28.5" defer></script>
+<script src="js/i18n.js?v=2026.10.28.6" defer></script>
+<script src="js/feedback.js?v=2026.10.28.6" defer></script>
+<script src="js/tags.js?v=2026.10.28.6" defer></script>
+<script src="js/views.js?v=2026.10.28.6" defer></script>
+<script src="js/app.js?v=2026.10.28.6" defer></script>
 </body>
 </html>

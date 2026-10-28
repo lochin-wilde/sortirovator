@@ -36,6 +36,8 @@
     --muted: #5f6875;
     --accent: #2f6bff;
     --accent-2: #2455cc;
+    /* The dark theme's amber is unreadable on white: 2:1. */
+    --warn: #8a6608;
   }
 }
 
@@ -673,8 +675,27 @@ details.lookups > :last-child { margin-bottom: 1rem; }
   background: var(--panel-2);
 }
 
-.archive-preview h3 { margin: 0; font-size: 0.95rem; }
-.archive-summary { margin-top: 0.3rem; }
+.archive-preview > summary { cursor: pointer; font-size: 0.95rem; }
+.archive-title { font-weight: 600; }
+.archive-summary { color: var(--muted); font-size: 0.88rem; }
+.grid-help { margin-top: 0.6rem; }
+.grid-help > summary { cursor: pointer; color: var(--muted); font-size: 0.86rem; }
+
+/* Columns no row of the batch has anything in (views.js, emptyColumns). */
+.results[data-hide~="artist"] .c-artist,
+.results[data-hide~="genre"] .c-genre,
+.results[data-hide~="bpm"] .c-bpm,
+.results[data-hide~="key"] .c-key,
+.results[data-hide~="loudness"] .c-loudness { display: none; }
+
+/* Key and three dots for how sure it is; the first dot is amber when unsure. */
+.key-cell { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+.key-conf { display: inline-flex; gap: 3px; }
+.key-conf i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.key-conf.level-1 i:nth-child(1) { background: var(--warn); }
+.key-conf.level-2 i:nth-child(-n+2),
+.key-conf.level-3 i { background: var(--text); }
+.drift { display: block; font-size: 0.75rem; color: var(--warn); }
 
 .archive-tree {
   margin-top: 0.7rem;

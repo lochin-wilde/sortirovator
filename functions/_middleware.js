@@ -366,6 +366,7 @@ function loginPage(message, name = "") {
     --muted: #5f6875;
     --accent: #2f6bff;
     --accent-2: #2455cc;
+    --warn: #8a6608;
     color-scheme: light;
   }
 }

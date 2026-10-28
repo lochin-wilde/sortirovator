@@ -17,7 +17,8 @@ const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
 const views = new Function(readFileSync("web/js/views.js", "utf8") +
-  "return { PRESETS, matchPreset, parseCamelot, camelotRelation, tempoDistance, mixNeighbours, archiveTree, MIX_TEMPO_TOLERANCE };")();
+  "return { PRESETS, matchPreset, parseCamelot, camelotRelation, tempoDistance, mixNeighbours, archiveTree, MIX_TEMPO_TOLERANCE," +
+  " keyConfidenceLevel, emptyColumns, primaryAction, unsavedWork, OPTIONAL_COLUMNS };")();
 const html = readFileSync("web/index.html", "utf8");
 const appSrc = readFileSync("web/js/app.js", "utf8");
 const i18nSrc = readFileSync("web/js/i18n.js", "utf8");
@@ -230,6 +231,68 @@ check("в прогоне не осталось ожидания resume() без 
   check("файлы декодирует decodeFile, а не контекст страницы напрямую",
     /audioBuffer = await decodeFile\(file\)/.test(appSrc) && !/decodeAudioData\(state\.audioContext, bytes\)/.test(appSrc));
 }
+
+/* ---------- The results table ---------- */
+
+check("нет тональности — нет точек", views.keyConfidenceLevel({ key: null }) === 0);
+check("ниже порога работника — одна точка", views.keyConfidenceLevel({ key: "4A", keyConfident: false, keyConfidence: 0.14 }) === 1);
+check("уверенно, 0.69 — две точки", views.keyConfidenceLevel({ key: "4A", keyConfident: true, keyConfidence: 0.69 }) === 2);
+check("уверенно, 0.70 — три точки", views.keyConfidenceLevel({ key: "4A", keyConfident: true, keyConfidence: 0.7 }) === 3);
+check("уверенно, но без числа — две точки", views.keyConfidenceLevel({ key: "4A", keyConfident: true, keyConfidence: null }) === 2);
+
+{
+  const rows = [
+    { feedbackArtist: "ZHU", genre: null, bpm: 125, key: "3A", browseLufs: -13.4 },
+    { feedbackArtist: null, genre: null, bpm: null, key: null, browseLufs: null },
+  ];
+  check("жанры не искались — колонка жанра скрыта, остальные нет",
+    JSON.stringify(views.emptyColumns(rows)) === JSON.stringify(["genre"]));
+  check("жанр есть хотя бы у одного трека — колонка видна",
+    !views.emptyColumns([...rows, { genre: "House" }]).includes("genre"));
+  check("пустая таблица — ничего не скрываем", views.emptyColumns([]).length === 0);
+  check("только жанры — скрыты темп, тональность и громкость",
+    JSON.stringify(views.emptyColumns([{ feedbackArtist: "ZHU", genre: "House", bpm: null, key: null, browseLufs: null }])) ===
+    JSON.stringify(["bpm", "key", "loudness"]));
+}
+// A column the code can hide has to be marked in all three places, or hiding
+// it takes the header away and leaves the cells, shifting every column after.
+{
+  const css = readFileSync("web/css/styles.css", "utf8");
+  const cells = cut("resultCells");
+  const missing = Object.keys(views.OPTIONAL_COLUMNS).filter((c) =>
+    !new RegExp(`<th class="[^"]*\\bc-${c}\\b`).test(html) || !cells.includes(`c-${c}`) ||
+    !css.includes(`.results[data-hide~="${c}"] .c-${c}`));
+  check("каждая скрываемая колонка помечена в заголовке, в ячейке и в стилях" + (missing.length ? ": нет " + missing.join(", ") : ""),
+    missing.length === 0);
+}
+
+check("идёт пачка — главная кнопка «Начать»", views.primaryAction({ running: true, produced: 3 }) === "start");
+check("ничего не собрано — главная «Начать»", views.primaryAction({ running: false, produced: 0 }) === "start");
+check("архив собран — главная «Скачать ZIP»", views.primaryAction({ running: false, produced: 6 }) === "download");
+
+check("пачка идёт — уход со страницы спрашивает", views.unsavedWork({ running: true, produced: 0, downloaded: false }));
+check("архив не скачан — спрашивает", views.unsavedWork({ running: false, produced: 6, downloaded: false }));
+check("архив скачан — не спрашивает", !views.unsavedWork({ running: false, produced: 6, downloaded: true }));
+check("пустая страница — не спрашивает", !views.unsavedWork({ running: false, produced: 0, downloaded: false }));
+check("страница предупреждает при закрытии, пока работа не сохранена",
+  /addEventListener\("beforeunload"/.test(appSrc) && /unsavedWork\(/.test(appSrc) && /state\.downloaded = true/.test(cut("downloadZip")));
+
+{
+  const stub = { t: (k) => ({ "table.keyConf1": "уверенность низкая", "table.drift": "плавает", "table.driftRange": "120–132" })[k] || k,
+    escapeHtml: (x) => String(x), keyConfidenceLevel: views.keyConfidenceLevel };
+  const keyCellHtml = new Function(...Object.keys(stub), cut("keyCellHtml") + "return keyCellHtml;")(...Object.values(stub));
+  const bpmCellHtml = new Function(...Object.keys(stub), cut("bpmCellHtml") + "return bpmCellHtml;")(...Object.values(stub));
+  const unsure = keyCellHtml({ key: "4A", keyConfident: false, keyConfidence: 0.14 });
+  check("неуверенная тональность — без «?» и «(0.14)» в тексте, с точками",
+    !/4A\?|\(0\.14\)/.test(unsure.replace(/title="[^"]*"/, "")) && unsure.includes("level-1"));
+  check("плавающий темп — словом, а не «~»", !bpmCellHtml({ bpm: 128, bpmMode: "dynamic" }).includes("~") &&
+    bpmCellHtml({ bpm: 128, bpmMode: "dynamic" }).includes("плавает"));
+  check("ровный темп — просто число", bpmCellHtml({ bpm: 125, bpmMode: "constant" }) === "125");
+}
+
+check("блок архива свёрнут в одну строку, пояснения к сетке спрятаны",
+  /<details class="archive-preview" id="archive-preview"/.test(html) &&
+  /<details class="grid-help">[\s\S]*grid\.accuracy[\s\S]*grid\.rb\.how[\s\S]*grid\.cdj[\s\S]*<\/details>/.test(html));
 
 /* ---------- Translations ---------- */
 
