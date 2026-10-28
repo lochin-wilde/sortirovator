@@ -33,7 +33,7 @@ closed testing.
 
 Every figure above was measured against a hand-labelled library, not estimated.
 How, and where the results are weak, is in [web/README.md](web/README.md). The
-short version: genre is the hard part — 20.5% exact, with the rest split between
+short version: genre is the hard part — 24.0% exact, with the rest split between
 related genres, wrong answers and an honest blank.
 
 ## How it is built

@@ -180,7 +180,7 @@ top-level README has the commands.
 |---|---|---|
 | **Tempo** | 4459 | **93.4%** within ±1 BPM; a further 3.5% are a clean multiple — double, half, 4/3 — that a DJ reads through |
 | **Key** | 4523 | **66.3%** exact, **85.3%** exact, relative or one step round the Camelot wheel — the network in `js/keycnn.js`. On GiantSteps-key, 604 tracks keyed by listeners: **67.5%** exact |
-| **Genre** | 375, 25 per folder | **20.5%** exact, 11.2% a related genre, 31.2% an honest blank |
+| **Genre** | 375, 25 per folder | **24.0%** exact, 12.0% a related genre, 30.9% an honest blank |
 
 **Read these per folder, not only in total.** The averages move with what the
 library contains. Between two runs a month apart, key accuracy rose from 59.4%
@@ -1037,6 +1037,15 @@ without it: exact 64 -> 76 (17.1% -> 20.3%; 15 tracks gained, 3 lost, McNemar
 jungle record whose Discogs styles name both now lands on Drum & Bass. The
 other two, and the remaining changes, are the services' data having moved
 since September.
+
+With Last.fm, the way the app runs, against the September run with it: exact
+77 -> 90 (20.5% -> 24.0%; 14 tracks gained, 1 lost, McNemar 9.6), wrong 139 ->
+124, blank 117 -> 116. This run also has the name lookup fed from the tags.
+Last.fm against no Last.fm on the same day: 18 tracks right only with it, 5
+only without (z = 2.71). The weak spot it shows is stage 2: 44 answers came
+from a remixer, 8 of them exact and 26 wrong -- a remixer sharing a name with
+a metal or folk act on MusicBrainz, or a version word ("Extended", "'Baile'")
+read as part of the remixer's name.
 
 ## Browser support
 
