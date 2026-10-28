@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Музыкальный сортир</title>
-<link rel="stylesheet" href="css/styles.css?v=2026.10.28.7">
+<link rel="stylesheet" href="css/styles.css?v=2026.10.28.8">
 </head>
 <body>
 
@@ -224,11 +224,20 @@
   </details>
 
   <div class="table-tools" id="table-tools" hidden>
-    <input type="search" id="table-filter" data-i18n-placeholder="table.filterPlaceholder" autocomplete="off">
+    <input type="search" id="table-filter" data-i18n-placeholder="table.filterPlaceholder" data-i18n-aria="table.filterPlaceholder" autocomplete="off">
+    <div class="view-chips" role="group" data-i18n-aria="view.label">
+      <button type="button" class="view-chip" data-view="all" aria-pressed="true"><span data-i18n="view.all"></span> <span class="view-count"></span></button>
+      <button type="button" class="view-chip" data-view="check" aria-pressed="false"><span data-i18n="view.check"></span> <span class="view-count"></span></button>
+      <button type="button" class="view-chip" data-view="mix" aria-pressed="false" disabled><span data-i18n="view.mix"></span> <span class="view-count"></span></button>
+    </div>
     <span class="hint" id="table-count"></span>
+    <button type="button" class="button small" id="table-csv" data-i18n="table.csv"></button>
   </div>
   <p class="hint table-hint" id="table-hint" data-i18n="table.rowHint" hidden></p>
 
+  <!-- On a wide screen the open track gets a panel beside the table; on a
+       narrow one it opens as a row under the track (app.js, renderResults). -->
+  <div class="results-area" id="results-area">
   <div class="results-wrap">
     <table class="results" id="results" hidden>
       <thead>
@@ -239,11 +248,13 @@
           <th class="sortable c-bpm" data-sort="bpm" data-i18n="table.bpm"></th>
           <th class="sortable c-key" data-sort="key" data-i18n="table.key"></th>
           <th class="sortable c-loudness" data-sort="loudness" data-i18n="table.loudness" data-i18n-title="table.loudnessHint"></th>
-          <th data-i18n="table.output"></th>
+          <th class="c-output" data-i18n="table.output"></th>
         </tr>
       </thead>
       <tbody id="results-body"></tbody>
     </table>
+  </div>
+  <aside class="track-panel" id="track-panel" hidden></aside>
   </div>
 
   <div id="feedback-block" hidden>
@@ -353,10 +364,10 @@
 
 <!-- jszip 3.10.1, served from our own origin: it handles every file the user
      loaded, so it is not a dependency to fetch from someone else's server. -->
-<script src="js/i18n.js?v=2026.10.28.7" defer></script>
-<script src="js/feedback.js?v=2026.10.28.7" defer></script>
-<script src="js/tags.js?v=2026.10.28.7" defer></script>
-<script src="js/views.js?v=2026.10.28.7" defer></script>
-<script src="js/app.js?v=2026.10.28.7" defer></script>
+<script src="js/i18n.js?v=2026.10.28.8" defer></script>
+<script src="js/feedback.js?v=2026.10.28.8" defer></script>
+<script src="js/tags.js?v=2026.10.28.8" defer></script>
+<script src="js/views.js?v=2026.10.28.8" defer></script>
+<script src="js/app.js?v=2026.10.28.8" defer></script>
 </body>
 </html>

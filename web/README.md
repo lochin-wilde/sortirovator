@@ -638,6 +638,21 @@ Download becomes the main button, and closing the tab before it is saved asks
 first: the archive exists only in the tab's memory. What will be in the archive
 is folded to one line above the table, with the grid settings inside it.
 
+The search box takes words, a Camelot code ("8A", that key only) and a tempo
+range ("124-128", "124 – 128"); every word has to match. Beside it, three
+views: everything, the tracks worth checking (a failure, a key below the
+threshold, a drifting tempo, a genre guessed from the artist or not found),
+and the open track with what mixes with it. "Table as CSV" saves the rows as
+shown, filtered and sorted, with a byte-order mark for Excel and any text a
+spreadsheet would run as a formula defused with an apostrophe.
+
+A clicked track opens in a panel beside the table on a wide screen and in a
+row under it on a narrow one, with a player for the file itself, played from
+the disk. The table is redrawn as each track of a batch finishes, so the
+player is one element moved into each new panel rather than rebuilt; moving a
+playing element in one step does not stop it, and a track can be listened to
+while the rest of the batch runs.
+
 Loudness is measured for **every** track, not only when normalization is on.
 That became affordable by splitting the measurement in two: the table's figure
 comes from the mono downmix already being transferred for tempo analysis and

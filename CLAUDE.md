@@ -70,8 +70,9 @@ evaluated whole. Pure logic therefore belongs in `identify.js`, `tags.js`,
 opens the second): *Process files* (drop zone and preset cards, the four switches folded
 into "fine-tuning", beside them the `.setup-plan` summary with the Start button; then the
 results section, hidden until a run or a `notify()`: archive preview folded to one line,
-the table, click a track row for Camelot/tempo neighbours and the `describeResult`
-reasoning) and *Rekordbox collection*. The one lookups block
+search and the all/check/mix views, the table; a clicked track opens in `#track-panel`
+beside it on wide screens or in a row under it, with one `<audio>` element kept across
+redraws (`placePlayer`), its Camelot/tempo neighbours and the `describeResult` reasoning) and *Rekordbox collection*. The one lookups block
 (`#lookups-panel`) is physically moved into whichever mode is showing, so both read the
 same inputs. `views.js` holds the pure parts: `PRESETS`/`matchPreset`, `mixNeighbours`
 (standard Camelot moves, ±6% tempo, half/double time allowed), `archiveTree`,

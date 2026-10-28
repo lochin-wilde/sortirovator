@@ -18,7 +18,8 @@ const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${l
 
 const views = new Function(readFileSync("web/js/views.js", "utf8") +
   "return { PRESETS, matchPreset, parseCamelot, camelotRelation, tempoDistance, mixNeighbours, archiveTree, MIX_TEMPO_TOLERANCE," +
-  " keyConfidenceLevel, emptyColumns, primaryAction, unsavedWork, OPTIONAL_COLUMNS, batchPlan, secondsLeft };")();
+  " keyConfidenceLevel, emptyColumns, primaryAction, unsavedWork, OPTIONAL_COLUMNS, batchPlan, secondsLeft," +
+  " needsCheck, matchQuery, tableCsv };")();
 const html = readFileSync("web/index.html", "utf8");
 const appSrc = readFileSync("web/js/app.js", "utf8");
 const i18nSrc = readFileSync("web/js/i18n.js", "utf8");
@@ -334,6 +335,48 @@ check("страница предупреждает при закрытии, по
 check("блок архива свёрнут в одну строку, пояснения к сетке спрятаны",
   /<details class="archive-preview" id="archive-preview"/.test(html) &&
   /<details class="grid-help">[\s\S]*grid\.accuracy[\s\S]*grid\.rb\.how[\s\S]*grid\.cdj[\s\S]*<\/details>/.test(html));
+
+/* ---------- Results: search, the "check" view, CSV, the open track ---------- */
+
+{
+  const zhu = { name: "ZHU - Ghost In My Bed.mp3", feedbackArtist: "ZHU", genre: "House", bpm: 125, key: "3A", keyConfident: true, keyConfidence: 0.86 };
+  check("поиск «3a» — по тональности", views.matchQuery(zhu, "3a") && !views.matchQuery(zhu, "4a"));
+  check("поиск «124 – 128» с пробелами и длинным тире — диапазон темпа", views.matchQuery(zhu, "124 – 128"));
+  check("поиск «128-124» — диапазон в обратном порядке тоже", views.matchQuery(zhu, "128-124"));
+  check("границы диапазона включены", views.matchQuery(zhu, "125-130") && !views.matchQuery(zhu, "126-130"));
+  check("все слова должны совпасть: «zhu 3a» да, «zhu 4a» нет", views.matchQuery(zhu, "zhu 3a") && !views.matchQuery(zhu, "zhu 4a"));
+  check("трек без темпа в диапазон не попадает", !views.matchQuery({ name: "x" }, "120-130"));
+  check("пустой поиск — всё", views.matchQuery(zhu, "  "));
+
+  check("проверить: тональность ниже порога", views.needsCheck({ key: "4A", keyConfident: false }));
+  check("проверить: плавающий темп", views.needsCheck({ bpmMode: "dynamic" }));
+  check("проверить: жанр угадан по артисту или не найден", views.needsCheck({ genreWeak: true }) && views.needsCheck({ genre: "Unknown" }));
+  check("проверить: ошибка", views.needsCheck({ error: "x" }));
+  check("уверенный трек проверять не нужно", !views.needsCheck(zhu));
+
+  const csv = views.tableCsv([
+    { name: '=HYPERLINK("x"),a.mp3', feedbackArtist: "A; B", bpm: 125, bpmMode: "dynamic", key: "3A", keyConfidence: 0.8612, browseLufs: -13.44, outputPath: "House/a.mp3" },
+  ], ["Файл", "Исполнитель", "Жанр", "BPM", "Темп", "мин", "макс", "Тональность", "Уверенность", "LUFS", "Результат"]);
+  const lines = csv.split("\r\n");
+  check("CSV: метка UTF-8 для Excel и строки через CRLF", csv.startsWith("\uFEFFФайл,") && lines.length === 3 && lines[2] === "");
+  check("CSV: формула в имени файла обезврежена и взята в кавычки", lines[1].startsWith('"\'=HYPERLINK(""x""),a.mp3"'));
+  check("CSV: поле с «;» в кавычках, числа как числа", lines[1].includes('"A; B"') && lines[1].includes(",125,dynamic,") && lines[1].includes(",0.86,-13.4,"));
+}
+{
+  const area = html.slice(html.indexOf('<div class="results-area"'));
+  check("панель трека стоит рядом с таблицей", /<aside class="track-panel" id="track-panel" hidden><\/aside>/.test(area));
+  check("колонка «Результат» помечена в заголовке и в ячейке",
+    /<th class="c-output"/.test(html) && cut("resultCells").includes("c-output"));
+  const place = cut("placePlayer");
+  check("плеер создаётся заново только при смене трека, иначе переносится",
+    /player\.row !== openRow/.test(place) && /appendChild\(player\.element\)/.test(place));
+  check("закрытый трек — плеер останавливается и отпускает файл",
+    /\.pause\(\)/.test(cut("stopPlayer")) && /revokeObjectURL/.test(cut("stopPlayer")));
+  check("место для плеера есть и в панели, и в строке под треком",
+    cut("panelHtml").includes("player-slot") && cut("renderResults").includes("player-slot"));
+  check("новая пачка и очистка закрывают трек и плеер", (appSrc.match(/clearTrackPanel\(\);/g) || []).length === 2);
+  check("файл трека запоминается для плеера", /resultFiles\.set\(result, file\)/.test(appSrc));
+}
 
 /* ---------- Translations ---------- */
 

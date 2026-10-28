@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.7";
+const APP_VERSION = "2026.10.28.8";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -103,6 +103,9 @@ const ui = {
   appMain: el("app-main"),
   tableTools: el("table-tools"),
   tableFilter: el("table-filter"),
+  tableCsv: el("table-csv"),
+  trackPanel: el("track-panel"),
+  resultsArea: el("results-area"),
   tableCount: el("table-count"),
   feedbackExport: el("feedback-export"),
   feedbackClear: el("feedback-clear"),
@@ -1144,6 +1147,7 @@ function formatSigned(value) {
 const resultRows = [];
 let tableSort = { column: null, ascending: true };
 let tableFilter = "";
+let tableView = "all"; // "all", "check" or "mix" (the open track and what mixes with it)
 // The row whose details are open under it, by index into resultRows.
 let openRow = null;
 
@@ -1192,13 +1196,13 @@ function resultCells(result, index) {
       '<span class="genre-edit-mark">✎</span></button>'
     : "—";
 
-  return '<td class="name">' + escapeHtml(result.name) + (result.error ? " ⚠" : "") + "</td>" +
+  return '<td class="name" title="' + escapeHtml(result.name) + '">' + escapeHtml(result.name) + (result.error ? " ⚠" : "") + "</td>" +
     '<td class="c-artist">' + escapeHtml(result.feedbackArtist || "—") + "</td>" +
     '<td class="genre-cell c-genre">' + genreCell + "</td>" +
     '<td class="c-bpm">' + bpmCellHtml(result) + "</td>" +
     '<td class="c-key">' + keyCellHtml(result) + "</td>" +
     '<td class="c-loudness">' + escapeHtml(loudnessText) + "</td>" +
-    '<td class="name muted">' + escapeHtml(result.outputPath || "—") + "</td>";
+    '<td class="name muted c-output">' + escapeHtml(result.outputPath || "—") + "</td>";
 }
 
 function sortValue(result, column) {
@@ -1215,18 +1219,26 @@ function sortValue(result, column) {
   }
 }
 
-function matchesFilter(result) {
-  if (!tableFilter) return true;
-  const haystack = [result.name, result.feedbackArtist, result.genre, result.key]
-    .filter(Boolean).join(" ").toLowerCase();
-  return haystack.includes(tableFilter);
+// The search box (views.js, matchQuery) and the view chips: everything, the
+// tracks worth checking, or the open track with what mixes with it.
+function matchesFilter(result, index, mixSet) {
+  if (!matchQuery(result, tableFilter)) return false;
+  if (tableView === "check") return needsCheck(result);
+  if (tableView === "mix") return mixSet.has(index);
+  return true;
 }
 
-function renderResults() {
+function mixSetFor(index) {
+  if (index === null || !resultRows[index]) return new Set();
+  return new Set([index, ...mixNeighbours(resultRows, index).map((n) => n.index)]);
+}
+
+// Rows as the table shows them: filtered, then in the chosen order.
+function visibleRows() {
+  const mixSet = mixSetFor(openRow);
   const visible = resultRows
     .map((result, index) => ({ result, index }))
-    .filter((row) => matchesFilter(row.result));
-
+    .filter((row) => matchesFilter(row.result, row.index, mixSet));
   if (tableSort.column) {
     visible.sort((a, b) => {
       const va = sortValue(a.result, tableSort.column);
@@ -1236,6 +1248,88 @@ function renderResults() {
       return 0;
     });
   }
+  return visible;
+}
+
+/*
+ * The open track: on a wide screen in a panel beside the table, otherwise in
+ * a row under it. Either way with a player for the file itself -- played from
+ * the user's disk, nothing is uploaded.
+ *
+ * The table is redrawn as each track of a batch finishes, so the player is one
+ * element kept across redraws and moved into the new slot: a fresh one would
+ * stop the music every few seconds. Moving it in one go does not pause it.
+ */
+const resultFiles = new WeakMap();
+const PANEL_QUERY = window.matchMedia("(min-width: 1100px)");
+const player = { row: null, url: null, element: null };
+
+function stopPlayer() {
+  if (player.element) {
+    player.element.pause();
+    player.element.remove();
+  }
+  if (player.url) URL.revokeObjectURL(player.url);
+  player.row = null;
+  player.url = null;
+  player.element = null;
+}
+
+function placePlayer() {
+  const slot = document.querySelector(".player-slot");
+  const file = openRow !== null && resultRows[openRow] ? resultFiles.get(resultRows[openRow]) : null;
+  if (!slot || !file) {
+    stopPlayer();
+    return;
+  }
+  if (player.row !== openRow) {
+    stopPlayer();
+    player.row = openRow;
+    player.url = URL.createObjectURL(file);
+    player.element = document.createElement("audio");
+    player.element.controls = true;
+    player.element.preload = "metadata";
+    player.element.src = player.url;
+    player.element.setAttribute("aria-label", t("panel.listen"));
+  }
+  if (player.element.parentNode !== slot) slot.appendChild(player.element);
+}
+
+// A new batch or a cleared one: no open track, nothing playing.
+function clearTrackPanel() {
+  stopPlayer();
+  ui.trackPanel.innerHTML = "";
+  ui.trackPanel.hidden = true;
+  ui.resultsArea.classList.remove("with-panel");
+}
+
+function panelHtml(index) {
+  const result = resultRows[index];
+  return '<div class="panel-head"><h3>' + escapeHtml(trackLabel(result)) + "</h3>" +
+    '<button type="button" class="panel-close" data-close aria-label="' + escapeHtml(t("panel.close")) + '">×</button></div>' +
+    '<div class="player-slot"></div>' +
+    (result.outputPath ? '<p class="hint panel-output">' + escapeHtml(t("panel.output")) + ": " +
+      escapeHtml(result.outputPath) + "</p>" : "") +
+    detailHtml(index);
+}
+
+function renderViewChips() {
+  // The mix view shows the open track too; its count is only the tracks that mix with it.
+  const counts = { all: resultRows.length, check: resultRows.filter(needsCheck).length, mix: Math.max(0, mixSetFor(openRow).size - 1) };
+  if (tableView === "mix" && openRow === null) tableView = "all";
+  document.querySelectorAll("[data-view]").forEach((chip) => {
+    chip.setAttribute("aria-pressed", String(chip.dataset.view === tableView));
+    chip.disabled = chip.dataset.view === "mix" && openRow === null;
+    const count = chip.querySelector(".view-count");
+    if (count) count.textContent = chip.disabled ? "" : String(counts[chip.dataset.view]);
+  });
+}
+
+function renderResults() {
+  if (openRow !== null && !resultRows[openRow]) openRow = null;
+  renderViewChips();
+  const visible = visibleRows();
+  const wide = PANEL_QUERY.matches;
 
   ui.resultsBody.innerHTML = visible
     .map((row) => {
@@ -1243,9 +1337,15 @@ function renderResults() {
       return '<tr class="track-row' + (open ? " open" : "") + '" tabindex="0" aria-expanded="' + open +
         '" data-track="' + row.index + '">' +
         resultCells(row.result, row.index) + "</tr>" +
-        (open ? '<tr class="detail-row"><td colspan="7">' + detailHtml(row.index) + "</td></tr>" : "");
+        (open && !wide ? '<tr class="detail-row"><td colspan="7"><div class="player-slot"></div>' +
+          detailHtml(row.index) + "</td></tr>" : "");
     })
     .join("");
+  const panelOpen = wide && openRow !== null;
+  ui.trackPanel.innerHTML = panelOpen ? panelHtml(openRow) : "";
+  ui.trackPanel.hidden = !panelOpen;
+  ui.resultsArea.classList.toggle("with-panel", panelOpen);
+  placePlayer();
   ui.results.hidden = resultRows.length === 0;
   ui.results.dataset.hide = emptyColumns(resultRows).join(" ");
   ui.tableTools.hidden = resultRows.length === 0;
@@ -1329,14 +1429,13 @@ function detailHtml(index) {
       parts.push('<ul class="mix-list">' + neighbours.map((n) => {
         const other = resultRows[n.index];
         const meta = [
-          other.key ? other.key + (other.keyConfident ? "" : "?") : null,
           n.relation ? t("mix." + n.relation) : null,
           typeof other.bpm === "number" ? other.bpm + " BPM" : null,
           mixTempoText(n),
         ].filter(Boolean).join(" · ");
         return '<li><button type="button" class="mix-track" data-open="' + n.index + '">' +
           escapeHtml(trackLabel(other)) + '</button> <span class="mix-meta">' +
-          escapeHtml(meta) + "</span></li>";
+          (other.key ? keyCellHtml(other) + " · " : "") + escapeHtml(meta) + "</span></li>";
       }).join("") + "</ul>");
     }
     parts.push("</div>");
@@ -1384,9 +1483,50 @@ ui.resultsBody.addEventListener("keydown", (event) => {
 
 // The table is redrawn as each track finishes, so the reasoning block would
 // snap shut under the reader every few seconds without this.
-ui.resultsBody.addEventListener("toggle", (event) => {
-  if (event.target.classList && event.target.classList.contains("why")) whyOpen = event.target.open;
-}, true);
+for (const area of [ui.resultsBody, ui.trackPanel]) {
+  area.addEventListener("toggle", (event) => {
+    if (event.target.classList && event.target.classList.contains("why")) whyOpen = event.target.open;
+  }, true);
+}
+
+ui.trackPanel.addEventListener("click", (event) => {
+  if (event.target.closest("[data-close]")) {
+    openRow = null;
+    renderResults();
+    return;
+  }
+  const jump = event.target.closest(".mix-track");
+  if (!jump) return;
+  openRow = Number(jump.dataset.open);
+  renderResults();
+  const row = ui.resultsBody.querySelector('tr[data-track="' + openRow + '"]');
+  if (row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+});
+
+document.querySelectorAll("[data-view]").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    tableView = chip.dataset.view;
+    renderResults();
+  });
+});
+
+// Panel or row follows the window's width.
+PANEL_QUERY.addEventListener("change", () => { if (resultRows.length > 0) renderResults(); });
+
+// The table as shown -- filtered and sorted -- for a spreadsheet.
+ui.tableCsv.addEventListener("click", () => {
+  const headers = ["table.file", "table.artist", "table.genre", "table.bpm", "csv.tempo", "csv.bpmMin", "csv.bpmMax",
+    "table.key", "csv.keyConfidence", "csv.lufs", "table.output"].map((key) => t(key));
+  const blob = new Blob([tableCsv(visibleRows().map((row) => row.result), headers)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "SortedMusic.csv";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+});
 
 // Scoped to its own table. It used to take the first <thead> in the document,
 // which only worked while this was the only table on the page.
@@ -1538,8 +1678,10 @@ async function runBatch() {
   resultRows.length = 0;
   tableSort = { column: null, ascending: true };
   tableFilter = "";
+  tableView = "all";
   ui.tableFilter.value = "";
   ui.tableTools.hidden = true;
+  clearTrackPanel();
   ui.logBox.open = true;
 
   await loadGenresMap();
@@ -1590,6 +1732,7 @@ async function runBatch() {
     }
 
     if (result.error) failed++;
+    resultFiles.set(result, file);
     pending.set(index, { file, result, index });
     flushReady();
 
@@ -1724,8 +1867,10 @@ function resetBatch() {
   openRow = null;
   tableSort = { column: null, ascending: true };
   tableFilter = "";
+  tableView = "all";
   ui.tableFilter.value = "";
   ui.tableTools.hidden = true;
+  clearTrackPanel();
   ui.tableHint.hidden = true;
   ui.feedbackBlock.hidden = true;
   ui.results.hidden = true;
@@ -2380,7 +2525,7 @@ function initLanguage() {
 }
 
 ui.tableFilter.addEventListener("input", () => {
-  tableFilter = ui.tableFilter.value.trim().toLowerCase();
+  tableFilter = ui.tableFilter.value;
   renderResults();
 });
 

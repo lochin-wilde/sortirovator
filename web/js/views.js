@@ -281,6 +281,70 @@ function unsavedWork(run) {
   return Boolean(run.running || (run.produced > 0 && !run.downloaded));
 }
 
+/*
+ * A track worth a second look: it failed, its key is below the worker's
+ * threshold, its tempo drifts, its genre is a guess from the artist, or no
+ * genre was found. The "check" filter shows these.
+ */
+function needsCheck(result) {
+  if (!result) return false;
+  return Boolean(result.error) || keyConfidenceLevel(result) === 1 || result.bpmMode === "dynamic" ||
+    Boolean(result.genreWeak) || result.genre === "Unknown";
+}
+
+/*
+ * The table's search. Each word has to match: a Camelot code ("8a") matches
+ * that key only, a range ("124-128", "124–128") matches tempos inside it, and
+ * anything else is looked for in the name, artist, genre and key. Dashes
+ * lose their spaces first, so "124 – 128" is one range rather than three words.
+ */
+const CAMELOT_QUERY = /^(1[0-2]|[1-9])[ab]$/;
+const TEMPO_RANGE_QUERY = /^(\d{2,3}(?:\.\d+)?)-(\d{2,3}(?:\.\d+)?)$/;
+
+function matchQuery(result, query) {
+  const words = String(query || "").toLowerCase().replace(/\s*[-–—]\s*/g, "-").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const haystack = [result.name, result.feedbackArtist, result.feedbackTitle, result.genre, result.key]
+    .filter(Boolean).join(" ").toLowerCase();
+  return words.every((word) => {
+    if (CAMELOT_QUERY.test(word)) return String(result.key || "").toLowerCase() === word;
+    const range = word.match(TEMPO_RANGE_QUERY);
+    if (range) {
+      const low = Math.min(Number(range[1]), Number(range[2]));
+      const high = Math.max(Number(range[1]), Number(range[2]));
+      return typeof result.bpm === "number" && result.bpm >= low && result.bpm <= high;
+    }
+    return haystack.includes(word);
+  });
+}
+
+/*
+ * The results table as CSV, for a spreadsheet. A byte-order mark so Excel
+ * reads it as UTF-8, quotes where a field needs them, and text that a
+ * spreadsheet would run as a formula (a file named "=HYPERLINK(...)") is
+ * prefixed with an apostrophe. Numbers go out as numbers.
+ */
+function csvField(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  let text = String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+  return /[",;\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function tableCsv(rows, headers) {
+  const lines = [headers.map(csvField).join(",")];
+  for (const r of rows) {
+    lines.push([
+      r.name, r.feedbackArtist, r.genre, r.bpm, r.bpmMode, r.bpmMin, r.bpmMax, r.key,
+      typeof r.keyConfidence === "number" ? Math.round(r.keyConfidence * 100) / 100 : null,
+      typeof r.browseLufs === "number" ? Math.round(r.browseLufs * 10) / 10 : null,
+      r.outputPath,
+    ].map(csvField).join(","));
+  }
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
+}
+
 /* ------------------------------------------------------------------ */
 /* The usage count                                                     */
 /* ------------------------------------------------------------------ */
