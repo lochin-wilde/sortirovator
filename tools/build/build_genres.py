@@ -207,6 +207,32 @@ def main():
         "afro soul": "Afrobeats", "gqom": "Afro House",
         "organic house": "Melodic House", "deep tech": "Minimal / Deep Tech",
     }
+    # Discogs styles, in Discogs' own spelling, that the map did not have. A
+    # Discogs lookup counts styles across releases and takes the first that maps
+    # (identify.js, discogsGenre); an unmapped style is skipped, so a drum and
+    # bass record listed only as "Drum n Bass" fell through to its genre,
+    # "Electronic". Found by checking Discogs' 400-style list (the classes of
+    # MTG's Discogs-EffNet) against the map: 115 were missing. Only styles with
+    # one clear shelf are added. Words that other sources use for anything --
+    # "instrumental", "vocal", "ghetto", "tribal" -- are left out, since the map
+    # serves Last.fm and MusicBrainz tags as well, and so is "Halftime", which
+    # sits between drum and bass and dubstep: Discogs-EffNet gave it to 11 of
+    # the owner's 50 dubstep tracks.
+    discogs_styles = {
+        "drum n bass": "Drum & Bass",
+        "juke": "Ghetto House / Juke", "psy-trance": "Psytrance",
+        "hip-house": "House", "euro house": "House",
+        "italo-disco": "Disco", "euro-disco": "Disco", "hi nrg": "Disco",
+        "conscious": "Hip-Hop", "gangsta": "Hip-Hop", "jazzy hip-hop": "Hip-Hop",
+        "ragga hiphop": "Hip-Hop", "thug rap": "Hip-Hop", "screw": "Hip-Hop",
+        "cut-up/dj": "Hip-Hop", "dj battle tool": "Hip-Hop",
+        "ragga": "Reggae / Dancehall", "reggae-pop": "Reggae / Dancehall",
+        "p.funk": "Funk / Soul", "rhythm & blues": "Funk / Soul",
+        "swingbeat": "Funk / Soul", "uk street soul": "Funk / Soul",
+        "rnb/swing": "Funk / Soul",
+    }
+    additions.update(discogs_styles)
+
     added = 0
     for tag, genre in additions.items():
         if tag not in new:

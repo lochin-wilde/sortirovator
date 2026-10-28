@@ -93,7 +93,7 @@ store genre for the matched song, specific ones only, also weak → `Unknown`.
 There is deliberately no audio-based fallback: the old centroid classifier was 0/143
 right and was deleted. Artist/title come from the file's ID3 tags first, filename
 second (`usableTag`, `parseFilename` — which detects "Title - Artist" order).
-`web/data/genres_map.json` maps 6712 tags → 53 categories and is generated — a test
+`web/data/genres_map.json` maps 6735 tags → 53 categories and is generated — a test
 fails if it differs from a fresh build.
 
 **Tag writing** (`tags.js` `writeTags`): ID3v2.4 into MP3 (prepended) and WAV (`id3 `

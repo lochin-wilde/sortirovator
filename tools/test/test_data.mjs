@@ -36,6 +36,19 @@ try {
   for (const needed of ["Nu Disco", "Soulful House", "Grime", "Afro House", "Jersey Club"]) {
     check(`категория «${needed}» на месте`, categories.has(needed));
   }
+
+  // Discogs spells styles its own way. A record listed as style "Drum n Bass",
+  // genre "Electronic" has to come out as Drum & Bass, the way discogsGenre
+  // ranks a release's names; before the style was in the map it came out as
+  // Electronic.
+  const identify = new Function(readFileSync("web/js/identify.js", "utf8") + "\nreturn { firstMappedGenre };")();
+  const discogs = (style, genre) => identify.firstMappedGenre([{ name: style, count: 1 }, { name: genre, count: 1 }], map, true);
+  check("Discogs «Drum n Bass» + «Electronic» → Drum & Bass", discogs("Drum n Bass", "Electronic")?.genre === "Drum & Bass");
+  check("Discogs «Juke» + «Electronic» → Ghetto House / Juke", discogs("Juke", "Electronic")?.genre === "Ghetto House / Juke");
+  check("Discogs «Psy-Trance» + «Electronic» → Psytrance", discogs("Psy-Trance", "Electronic")?.genre === "Psytrance");
+  check("Discogs «Gangsta» + «Hip Hop» → Hip-Hop", discogs("Gangsta", "Hip Hop")?.genre === "Hip-Hop");
+  check("слова на все случаи («instrumental», «vocal») в словарь не попали",
+    !Object.prototype.hasOwnProperty.call(map, "instrumental") && !Object.prototype.hasOwnProperty.call(map, "vocal"));
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
