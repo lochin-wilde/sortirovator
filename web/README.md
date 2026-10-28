@@ -524,8 +524,8 @@ find one maximum. Hoisting the bounds check out of the inner loop halved it,
 2518 ms → 1298 ms. It is still the single most expensive step and resisted
 further work: the rigorous skip condition depends on the kernel's L1 norm, which
 is 2.39 here, so it only prunes material below 42% of peak — and music is rarely
-that quiet. Going further needs approximation, which is not acceptable in a
-measurement.
+that quiet. Going further seemed to need approximation, which is not acceptable
+in a measurement; it turned out not to (see below).
 
 **True peak is now optional.** Sorting by level does not need it, so the table's
 loudness figure skips it: 91 ms instead of 1619 ms. The figures that drive gain
@@ -550,11 +550,11 @@ itself. It is also among the cheapest, so that costs little.
 | Key: the network | 1.32 s (was 1.92) |
 | Grid | 1.13 s (was 1.96): band envelopes 0.60, bar frames 0.27, whole-track tempo 0.19 |
 | Tempo | 0.52 s (was 0.81), of which the onset envelope 0.31 |
-| Loudness for normalization (true peak) | 1.34 s, only when normalizing |
+| Loudness for normalization (true peak) | 0.49 s (was 1.34), only when normalizing |
 | Browse loudness | 0.07 s |
 
-Tempo, grid and key together: about 3.1 s per track, from 4.9 s before these
-two changes.
+Tempo, grid and key together: about 3.1 s per track, from 4.9 s before the
+changes below; with normalization 3.6 s, from 6.2 s.
 
 The network's convolutions now sum four neighbouring outputs per pass, so each
 weight is read once for four of them; every output adds the same terms in the
@@ -574,6 +574,18 @@ on every one; the grid's confidence moved on two tracks, by 0.02 at most, both
 far below the threshold. `tools/test/test_spectra.mjs` compares the paired
 spectra with frame-by-frame ones. Reordering the FFT's loops without changing
 a single operation saved only about 10% and was not kept.
+
+The true peak skips positions that cannot beat the peak found so far, and the
+bound that decides it was too loose to skip much: the loudest sample nearby
+times 2.39. Two things made it skip almost everything. The track is visited
+loudest neighbourhood first, so the peak to beat is close to final at once
+instead of being whatever the intro reached. And before the full 33-tap sum
+the four nearest taps are summed exactly, with only the other 29 bounded; that
+bound is 0.5 to 0.7 instead of 2.39, and on the tracks measured about one
+position in eighteen still needs the full sum. Every value that is computed
+is computed as before, so the result is the same to the bit: checked on the
+whole library (4523 tracks, every channel of the whole track) and in
+`tools/test/test_true_peak.mjs` against the scan that skips nothing.
 
 ### A note on measuring this
 

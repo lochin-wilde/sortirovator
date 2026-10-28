@@ -166,23 +166,37 @@ function gatedLoudness(blocks, from, to) {
  * seconds for a two-minute track, roughly half the entire analysis. It was
  * doing 524 million multiply-accumulates to find a single maximum.
  *
- * Two changes, neither of which alters the result:
+ * Every interpolated value that is computed comes out of the same operations
+ * in the same order as the naive form, so the peak is the same to the last
+ * bit; the work goes into not computing most of them.
  *
- * Interior samples are handled without per-tap bounds checks, with the first
- * and last few samples split off into their own guarded loop.
+ * A position is skipped when it cannot beat the peak found so far. An
+ * interpolated value is at most the loudest input sample in its filter window
+ * times the kernel's L1 norm. That norm is 2.4, though, so on a mastered track
+ * the bound alone skipped only about half the positions.
  *
- * A position is skipped entirely when it cannot possibly beat the peak found so
- * far. An interpolated value is bounded by the largest input sample in its
- * filter window times the kernel's L1 norm, so if that bound is already below
- * the running peak, the convolution is pointless. Most music spends most of its
- * time well below peak, so this prunes the great majority of positions.
+ * Neighbourhoods are visited loudest first, so the running peak is close to
+ * its final value almost at once. Walking the track from the start instead
+ * convolved every position of a quiet intro, because the peak it had to beat
+ * was still the intro's.
+ *
+ * Before the full 33-tap sum, the four taps nearest the position are summed
+ * on their own. The other 29 add at most the loudest sample times their share
+ * of the norm (0.5 to 0.7 depending on the phase), and when even that cannot
+ * reach the peak the position is done. About one position in eighteen gets
+ * the full sum.
+ *
+ * The three in-between phases share one pass over the samples.
  */
-function truePeakDb(channels) {
+const TRUE_PEAK_HALF_TAPS = 16;
+const TRUE_PEAK_CENTRAL_TAPS = 4;
+const TRUE_PEAK_BLOCK = 64;
+
+function truePeakKernels() {
   const factor = 4;
-  const halfTaps = 16;
+  const halfTaps = TRUE_PEAK_HALF_TAPS;
   const tapsPerPhase = 2 * halfTaps + 1;
   const phases = [];
-  let maxL1 = 0;
   for (let p = 0; p < factor; p++) {
     const kernel = new Float64Array(tapsPerPhase);
     let sum = 0;
@@ -196,60 +210,108 @@ function truePeakDb(channels) {
       sum += kernel[i];
     }
     if (sum !== 0) for (let i = 0; i < tapsPerPhase; i++) kernel[i] /= sum;
-    let l1 = 0;
-    for (let i = 0; i < tapsPerPhase; i++) l1 += Math.abs(kernel[i]);
-    if (l1 > maxL1) maxL1 = l1;
     phases.push(kernel);
   }
+  return phases;
+}
 
-  let peak = 0;
-  for (const data of channels) {
-    const n = data.length;
-    if (n === 0) continue;
-
-    // Rolling maximum of |x| over each filter window, used for the bound.
-    // Computed in blocks: the exact per-position maximum is not needed, only an
-    // upper bound, and a block maximum is a valid one.
-    const blockSize = 64;
-    const numBlocks = Math.ceil(n / blockSize);
-    const blockMax = new Float64Array(numBlocks);
-    for (let i = 0; i < n; i++) {
-      const a = Math.abs(data[i]);
-      const b = (i / blockSize) | 0;
-      if (a > blockMax[b]) blockMax[b] = a;
-      if (a > peak) peak = a;
+function truePeakDb(channels) {
+  const halfTaps = TRUE_PEAK_HALF_TAPS;
+  const tapsPerPhase = 2 * halfTaps + 1;
+  const blockSize = TRUE_PEAK_BLOCK;
+  const phases = truePeakKernels();
+  // Phase 0 is the samples themselves, covered by the sample peak below.
+  const k1 = phases[1], k2 = phases[2], k3 = phases[3];
+  const lo = halfTaps - TRUE_PEAK_CENTRAL_TAPS / 2 + 1;
+  const hi = halfTaps + TRUE_PEAK_CENTRAL_TAPS / 2;
+  let maxL1 = 0;
+  const outer = [];
+  for (const kernel of [k1, k2, k3]) {
+    let l1 = 0, out = 0;
+    for (let i = 0; i < tapsPerPhase; i++) {
+      l1 += Math.abs(kernel[i]);
+      if (i < lo || i > hi) out += Math.abs(kernel[i]);
     }
+    if (l1 > maxL1) maxL1 = l1;
+    // Widened a hair so rounding in the bound can never skip a real peak.
+    outer.push(out * (1 + 1e-9));
+  }
+  maxL1 *= 1 + 1e-9;
+  const [o1, o2, o3] = outer;
 
-    for (let i = 0; i < n; i++) {
-      // Windows span [i-halfTaps, i+halfTaps]; take the max over the blocks it
-      // touches as the bound.
-      const firstBlock = Math.max(0, ((i - halfTaps) / blockSize) | 0);
-      const lastBlock = Math.min(numBlocks - 1, ((i + halfTaps) / blockSize) | 0);
-      let localMax = 0;
-      for (let b = firstBlock; b <= lastBlock; b++) {
-        if (blockMax[b] > localMax) localMax = blockMax[b];
+  // Largest |x| per block of samples, and the sample peak.
+  let peak = 0;
+  const blockMaxes = channels.map((data) => {
+    const n = data.length;
+    const blockMax = new Float64Array(Math.ceil(n / blockSize));
+    for (let b = 0; b < blockMax.length; b++) {
+      let m = 0;
+      for (let i = b * blockSize, end = Math.min(n, i + blockSize); i < end; i++) {
+        const a = Math.abs(data[i]);
+        if (a > m) m = a;
       }
-      if (localMax * maxL1 <= peak) continue;
+      blockMax[b] = m;
+      if (m > peak) peak = m;
+    }
+    return blockMax;
+  });
+  if (peak === 0) return -120.0;
 
-      const interior = i >= halfTaps && i + halfTaps < n;
-      for (let p = 1; p < factor; p++) {
-        const kernel = phases[p];
-        let acc = 0;
-        if (interior) {
+  // A block's positions reach at most one block either side, so the loudest
+  // of the three bounds them all. Blocks go into half-dB bins below the sample
+  // peak; the order inside a bin does not matter, only that loud bins go first.
+  const BINS = 80;
+  const bins = Array.from({ length: BINS }, () => []);
+  blockMaxes.forEach((blockMax, c) => {
+    for (let b = 0; b < blockMax.length; b++) {
+      const m = Math.max(blockMax[b], b > 0 ? blockMax[b - 1] : 0, b + 1 < blockMax.length ? blockMax[b + 1] : 0);
+      if (m * maxL1 <= peak) continue;
+      bins[Math.min(BINS - 1, Math.floor(-40 * Math.log10(m / peak)))].push(c, b);
+    }
+  });
+
+  for (const bin of bins) {
+    for (let q = 0; q < bin.length; q += 2) {
+      const data = channels[bin[q]], blockMax = blockMaxes[bin[q]];
+      const n = data.length, numBlocks = blockMax.length;
+      for (let i = bin[q + 1] * blockSize, end = Math.min(n, i + blockSize); i < end; i++) {
+        const firstBlock = Math.max(0, ((i - halfTaps) / blockSize) | 0);
+        const lastBlock = Math.min(numBlocks - 1, ((i + halfTaps) / blockSize) | 0);
+        let localMax = 0;
+        for (let b = firstBlock; b <= lastBlock; b++) {
+          if (blockMax[b] > localMax) localMax = blockMax[b];
+        }
+        if (localMax * maxL1 <= peak) continue;
+
+        let a1 = 0, a2 = 0, a3 = 0;
+        if (i >= halfTaps && i + halfTaps < n) {
           const base = i - halfTaps;
-          for (let k = 0; k < tapsPerPhase; k++) acc += data[base + k] * kernel[k];
+          for (let k = lo; k <= hi; k++) {
+            const x = data[base + k];
+            a1 += x * k1[k]; a2 += x * k2[k]; a3 += x * k3[k];
+          }
+          if (Math.abs(a1) + o1 * localMax <= peak && Math.abs(a2) + o2 * localMax <= peak
+              && Math.abs(a3) + o3 * localMax <= peak) continue;
+          a1 = 0; a2 = 0; a3 = 0;
+          for (let k = 0; k < tapsPerPhase; k++) {
+            const x = data[base + k];
+            a1 += x * k1[k]; a2 += x * k2[k]; a3 += x * k3[k];
+          }
         } else {
           for (let k = 0; k < tapsPerPhase; k++) {
             const idx = i + k - halfTaps;
-            if (idx >= 0 && idx < n) acc += data[idx] * kernel[k];
+            if (idx >= 0 && idx < n) {
+              const x = data[idx];
+              a1 += x * k1[k]; a2 += x * k2[k]; a3 += x * k3[k];
+            }
           }
         }
-        const av = acc < 0 ? -acc : acc;
-        if (av > peak) peak = av;
+        const v = Math.max(Math.abs(a1), Math.abs(a2), Math.abs(a3));
+        if (v > peak) peak = v;
       }
     }
   }
-  return peak > 0 ? 20 * Math.log10(peak) : -120.0;
+  return 20 * Math.log10(peak);
 }
 
 /* ------------------------------------------------------------------ */
@@ -262,7 +324,7 @@ function truePeakDb(channels) {
  * the loudest result, matching measure_loudness() in the Python version.
  */
 /*
- * `withTruePeak` is off by default because the true-peak scan costs about 1.3 s
+ * `withTruePeak` is off by default because the true-peak scan costs about 0.3 s
  * per track while the LUFS figures cost 80 ms. Loudness normalization needs the
  * peak; sorting a library by level does not, and that distinction is what makes
  * it affordable to measure loudness on every track.
