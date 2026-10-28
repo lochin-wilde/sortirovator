@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.4";
+const APP_VERSION = "2026.10.28.5";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -62,6 +62,7 @@ const state = {
   genresMap: null,
   workers: [],
   audioContext: null,
+  decodeContext: undefined, // decodeFile() makes it; null where the browser cannot
   zip: null,
   running: false,
   cancelRequested: false,
@@ -430,6 +431,36 @@ function decodeAudioData(context, arrayBuffer) {
   });
 }
 
+/*
+ * Decoded at DECODE_RATE whatever the sound card runs at. decodeAudioData
+ * resamples to its context's rate, and the page's AudioContext runs at the
+ * output device's: on a 48 kHz card every 44.1 kHz file was resampled up,
+ * which made decoding three times slower and fed the analysis a rate nothing
+ * had been measured at -- one track came out at 186 BPM instead of 140, and
+ * first beats moved by 2 ms. An offline context has a fixed rate.
+ *
+ * Should a browser refuse to decode there, the page's own context is the
+ * fallback, as before. decodeAudioData takes over the bytes it is given, so
+ * the fallback reads the file again.
+ */
+const DECODE_RATE = 44100;
+
+async function decodeFile(file) {
+  if (state.decodeContext === undefined) {
+    try {
+      state.decodeContext = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, DECODE_RATE);
+    } catch (e) {
+      state.decodeContext = null;
+    }
+  }
+  if (state.decodeContext) {
+    try {
+      return await decodeAudioData(state.decodeContext, await file.arrayBuffer());
+    } catch (e) { /* the page's context below */ }
+  }
+  return decodeAudioData(state.audioContext, await file.arrayBuffer());
+}
+
 function downmixToMono(audioBuffer, maxSeconds) {
   const length = Math.min(audioBuffer.length, Math.ceil(maxSeconds * audioBuffer.sampleRate));
   const channelCount = audioBuffer.numberOfChannels;
@@ -788,8 +819,7 @@ async function processFile(file, options, slot) {
   if (needsAudio) {
     ui.fileStage.textContent = t("stage.decoding");
     try {
-      const bytes = await file.arrayBuffer();
-      audioBuffer = await decodeAudioData(state.audioContext, bytes);
+      audioBuffer = await decodeFile(file);
     } catch (e) {
       result.error = describeDecodeFailure(file);
       return result;
@@ -1382,8 +1412,8 @@ async function loadGenresMap() {
 /*
  * Getting the browser to let the page play audio.
  *
- * Decoding needs a running AudioContext, and browsers only start one in
- * response to a user's own click. The context used to be created inside the
+ * Decoding falls back to the page's AudioContext (decodeFile), which has to be
+ * running, and browsers only start one in response to a user's own click. The context used to be created inside the
  * batch, after the scripts it needs had been fetched -- so after a network
  * wait. Chrome counts any earlier click on the page; Safari only allows it
  * within a few seconds of the click, so on a slow connection the context

@@ -187,6 +187,50 @@ check("прогон без звука останавливается с сооб
 check("в прогоне не осталось ожидания resume() без срока",
   !/await state\.audioContext\.resume\(\)/.test(appSrc));
 
+/*
+ * Decoding happens at 44.1 kHz whatever the sound card runs at, in an offline
+ * context; the page's own context only when that one cannot decode. Stand-ins
+ * record which context decoded and at what rate the offline one was made.
+ */
+{
+  const make = (offline) => {
+    const log = { made: [], decodedBy: [], reads: 0 };
+    const window = {
+      OfflineAudioContext: offline === "missing" ? undefined : function (channels, length, rate) {
+        if (offline === "throws") throw new Error("NotSupported");
+        log.made.push(rate);
+        this.name = "offline";
+        this.decodeAudioData = () => (offline === "refuses" ? Promise.reject(new Error("EncodingError")) : Promise.resolve({ by: "offline" }));
+      },
+    };
+    const state = { decodeContext: undefined, audioContext: { decodeAudioData: () => Promise.resolve({ by: "page" }) } };
+    const decodeFile = new Function("window", "state", cut("decodeAudioData") + "\nconst DECODE_RATE = 44100;\nasync " + cut("decodeFile") + "return decodeFile;")(window, state);
+    const file = { arrayBuffer: async () => { log.reads++; return new ArrayBuffer(8); } };
+    return { decodeFile, file, log };
+  };
+  {
+    const { decodeFile, file, log } = make("works");
+    const a = await decodeFile(file), b = await decodeFile(file);
+    check("декодирует в отдельном контексте на 44.1 кГц, а не в контексте страницы",
+      a.by === "offline" && b.by === "offline" && JSON.stringify(log.made) === "[44100]");
+  }
+  {
+    const { decodeFile, file, log } = make("refuses");
+    const a = await decodeFile(file).catch(() => ({}));
+    check("отказ отдельного контекста — декодирует страница, файл прочитан заново", a.by === "page" && log.reads === 2);
+  }
+  {
+    const { decodeFile, file } = make("throws");
+    check("отдельный контекст не создаётся — декодирует страница", (await decodeFile(file).catch(() => ({}))).by === "page");
+  }
+  {
+    const { decodeFile, file } = make("missing");
+    check("в браузере нет OfflineAudioContext — декодирует страница", (await decodeFile(file).catch(() => ({}))).by === "page");
+  }
+  check("файлы декодирует decodeFile, а не контекст страницы напрямую",
+    /audioBuffer = await decodeFile\(file\)/.test(appSrc) && !/decodeAudioData\(state\.audioContext, bytes\)/.test(appSrc));
+}
+
 /* ---------- Translations ---------- */
 
 // Lines of one language's table, by its opening line, up to the next table.

@@ -539,8 +539,20 @@ responsive. Log blocks are buffered and emitted in file order; interleaving
 three tracks' lines would make the log unreadable.
 
 Decoding stays on the main thread because `decodeAudioData` is unavailable
-inside a worker on Safari, so it is the one stage that cannot overlap with
-itself. It is also among the cheapest, so that costs little.
+inside a worker on Safari. It does not hold the workers up: measured in Chrome
+on ten files, everything the main thread does before handing a track over --
+reading, decoding, the mono copies -- is about 0.45 s for a four-minute track,
+decodes of several files run in parallel, and in a batch of ten the workers
+spent 8-9% of their time waiting for it.
+
+Tracks are decoded at 44.1 kHz whatever the sound card runs at (`decodeFile`
+in `app.js`). `decodeAudioData` resamples to its context's rate, and the page's
+`AudioContext` runs at the output device's. With a 48 kHz card, emulated in
+Chrome on the same ten files, decoding took three times as long (0.3 to 0.9 s)
+and the analysis got a rate it had never been measured at: one track came out
+at 186 BPM instead of 140, another at 121 instead of 120, first beats moved by
+about 2 ms. An `OfflineAudioContext` has a fixed rate; the page's context is
+only the fallback, for a browser that will not decode in an offline one.
 
 **Where the time goes now** (`tools/measure/profile_stages.mjs`, 40 tracks of
 3.9 minutes on average, one at a time in Node; decoding not included):
@@ -918,7 +930,8 @@ a shelf of its own and had been filed into Funky / Disco House or Hip-Hop.
   available inside a Worker on Safari. It is native code and fast; everything
   actually expensive runs in the Worker.
 - **The `AudioContext` is created inside the Start click handler**, so Safari's
-  autoplay policy does not suspend it.
+  autoplay policy does not suspend it. Files are decoded in a separate
+  `OfflineAudioContext` at 44.1 kHz; the page's context is the fallback.
 - Up to four files are processed at once, sized from `hardwareConcurrency` and
   capped for memory: decoded audio is 32-bit floats per channel, so an hour of
   stereo takes about 1.4 GB whatever it weighed on disk. Buffers are released
