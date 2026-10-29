@@ -390,6 +390,9 @@ check("блок архива свёрнут в одну строку, поясн
   // drawn as a hat on every beat.
   const kick = column(60);
   check(`волна: бочка не протекает в верхи (${(kick.high / kick.low * 100).toFixed(1)}% от низов)`, kick.high < 0.02 * kick.low);
+  check("метроном и трек идут через свои регуляторы громкости",
+    /connect\(deck\.clickGain\)/.test(cut("scheduleDeckClicks")) && /connect\(deck\.musicGain\)/.test(cut("startDeckPlayback"))
+    && !/connect\(context\.destination\)/.test(cut("scheduleDeckClicks")));
   check("правка сетки уходит в архив только по «Сохранить»",
     !/applyGridEdit/.test(cut("editDraft")) && /gridDrafts\.set/.test(cut("editDraft")));
   check("новая пачка и очистка закрывают трек и деку", (appSrc.match(/clearTrackPanel\(\);/g) || []).length === 2);

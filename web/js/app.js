@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.29.4";
+const APP_VERSION = "2026.10.29.5";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -1435,6 +1435,10 @@ function buildDeck() {
         GRID_EDIT_BPM_MIN + '" max="' + GRID_EDIT_BPM_MAX + '" data-deck="bpm"></label>' +
         button('data-deck="tempo" data-factor="0.5"', "÷2") + button('data-deck="tempo" data-factor="2"', "×2") + "</div>" +
       '<label class="deck-click"><input type="checkbox" data-deck="click" checked> ' + escapeHtml(t("deck.click")) + "</label>" +
+      '<div class="deck-group deck-volumes">' +
+        '<label class="deck-volume">' + escapeHtml(t("deck.musicVolume")) + ' <input type="range" min="0" max="1" step="0.01" data-volume="music"></label>' +
+        '<label class="deck-volume">' + escapeHtml(t("deck.clickVolume")) + ' <input type="range" min="0" max="1" step="0.01" data-volume="click"></label>' +
+      "</div>" +
       '<div class="deck-group deck-save">' + button('data-deck="save"', t("deck.save"), "", "primary") +
         button('data-deck="discard"', t("deck.discard")) + button('data-deck="reset"', t("deck.reset")) + "</div>" +
       '<span class="deck-state hint"></span>' +
@@ -1617,6 +1621,10 @@ function renderDeck() {
     if (document.activeElement !== input) input.value = bands[input.dataset.band];
   });
   q('[data-deck="colors"]').hidden = !savedDeckColors();
+  const volumes = savedDeckVolumes();
+  ui.deck.querySelectorAll("[data-volume]").forEach((slider) => {
+    if (document.activeElement !== slider) slider.value = String(volumes[slider.dataset.volume]);
+  });
   drawDeckOverview(q(".deck-overview"), grid, pos, duration);
   drawDeckWave(q(".deck-wave"), grid, pos);
 }
@@ -1712,15 +1720,41 @@ function seekDeck(seconds) {
   else renderDeck();
 }
 
+/*
+ * The track and the clicks each go through their own gain, set by the deck's
+ * two sliders. The first metronome, a 35 ms sine at a third of full scale,
+ * vanished under any mastered track; the click is now a square wave, high and
+ * short, which cuts through a kick and a bass line at the same level.
+ */
+const DECK_VOLUME_STORAGE_KEY = "sortirovator.deckVolume";
+
+function savedDeckVolumes() {
+  try { return deckVolumes(JSON.parse(localStorage.getItem(DECK_VOLUME_STORAGE_KEY) || "null")); } catch (e) { return deckVolumes(null); }
+}
+
+function deckAudio() {
+  if (!deck.context) {
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    const volumes = savedDeckVolumes();
+    deck.musicGain = context.createGain();
+    deck.clickGain = context.createGain();
+    deck.musicGain.gain.value = volumes.music;
+    deck.clickGain.gain.value = volumes.click;
+    deck.musicGain.connect(context.destination);
+    deck.clickGain.connect(context.destination);
+    deck.context = context;
+  }
+  return deck.context;
+}
+
 function startDeckPlayback() {
   if (!deck.buffer) return;
-  if (!deck.context) deck.context = new (window.AudioContext || window.webkitAudioContext)();
-  const context = deck.context;
+  const context = deckAudio();
   if (context.state === "suspended") context.resume();
   if (deck.offset >= deck.buffer.duration - 0.05) deck.offset = 0;
   const source = context.createBufferSource();
   source.buffer = deck.buffer;
-  source.connect(context.destination);
+  source.connect(deck.musicGain);
   deck.startedAt = context.currentTime + 0.05;
   source.start(deck.startedAt, deck.offset);
   source.onended = () => {
@@ -1752,12 +1786,13 @@ function scheduleDeckClicks() {
     if (at < context.currentTime) continue;
     const tone = context.createOscillator();
     const gain = context.createGain();
-    tone.frequency.value = beat.beat === 1 ? 1760 : 1100;
-    gain.gain.setValueAtTime(0.35, at);
-    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.035);
-    tone.connect(gain).connect(context.destination);
+    tone.type = "square";
+    tone.frequency.value = beat.beat === 1 ? 2200 : 1500;
+    gain.gain.setValueAtTime(0.6, at);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.05);
+    tone.connect(gain).connect(deck.clickGain);
     tone.start(at);
-    tone.stop(at + 0.04);
+    tone.stop(at + 0.055);
   }
 }
 
@@ -1796,6 +1831,15 @@ ui.deck.addEventListener("click", async (event) => {
     case "colors": try { localStorage.removeItem(DECK_COLORS_STORAGE_KEY); } catch (e) { /* the theme's colours stay */ } renderDeck(); break;
     case "reset": gridDrafts.delete(result); if (result.gridOriginal) await applyGridEdit(result, result.gridOriginal, true); renderDeck(); break;
   }
+});
+
+// A volume applies as the slider moves and is kept for next time.
+ui.deck.addEventListener("input", (event) => {
+  const name = event.target.dataset.volume;
+  if (!name) return;
+  const volumes = { ...savedDeckVolumes(), [name]: Number(event.target.value) };
+  try { localStorage.setItem(DECK_VOLUME_STORAGE_KEY, JSON.stringify(volumes)); } catch (e) { /* this session only */ }
+  if (deck.context) (name === "music" ? deck.musicGain : deck.clickGain).gain.setTargetAtTime(volumes[name], deck.context.currentTime, 0.01);
 });
 
 // A colour applies as it is dragged in the picker and is kept for next time.

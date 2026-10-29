@@ -417,7 +417,9 @@ kick in the highs, and each kick was drawn as a hat.) The file is decoded the wa
 grid's seconds fall on the same samples, and it plays through Web Audio with a
 metronome scheduled on the same clock as the music; clicks timed against an
 `<audio>` element's `currentTime` drift by tens of milliseconds, the size of
-the error being checked. CUE behaves as on a deck: stopped it marks the spot,
+the error being checked. The track and the click have a volume slider each
+(kept in browser storage); the first click, a quiet 35 ms sine, vanished under
+any mastered track and is now a short square wave. CUE behaves as on a deck: stopped it marks the spot,
 playing it returns there. The GRID row has Rekordbox's edits: move by 1 or 10
 ms, "beat here" (the nearest beat onto the playhead), "bar here" (the beat at
 the playhead becomes the first of its bar), a tempo turned about the beat

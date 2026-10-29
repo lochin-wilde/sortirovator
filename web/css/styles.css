@@ -1046,6 +1046,9 @@ body.deck-open { padding-bottom: calc(var(--deck-height, 260px) + 1rem); }
 .deck-color-reset { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 0.15rem; font-size: 0.9rem; }
 .deck-color-reset:hover { color: var(--text); }
 .deck-state { flex-basis: 100%; color: var(--muted); font-size: 0.84rem; }
+.deck-volumes { gap: 0.9rem; }
+.deck-volume { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.84rem; white-space: nowrap; }
+.deck-volume input[type="range"] { width: 6.5rem; accent-color: var(--accent); }
 @media (max-width: 640px) {
   .deck { bottom: var(--action-bar-height, 4.6rem); gap: 0.3rem; padding-top: 0.45rem; }
   body.deck-open { padding-bottom: calc(var(--deck-height, 260px) + 6rem); }

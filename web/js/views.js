@@ -461,6 +461,21 @@ function deckBandColors(saved, defaults) {
   return out;
 }
 
+/*
+ * The deck's two volumes, 0 to 1, from browser storage: the track and the
+ * metronome. Anything missing or not a number in range takes the default.
+ */
+const DECK_VOLUME_DEFAULTS = { music: 0.7, click: 0.8 };
+
+function deckVolumes(saved) {
+  const out = {};
+  for (const [name, fallback] of Object.entries(DECK_VOLUME_DEFAULTS)) {
+    const value = saved ? Number(saved[name]) : NaN;
+    out[name] = saved && saved[name] !== null && saved[name] !== "" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* The usage count                                                     */
 /* ------------------------------------------------------------------ */

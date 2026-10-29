@@ -11,7 +11,7 @@ const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
 const v = new Function(readFileSync("web/js/views.js", "utf8") +
-  "\nreturn { wrapGrid, gridBeatsBetween, nudgeGrid, shiftGridBar, setGridTempo, nearestGridBeat, gridBeatAt, gridBarAt, gridBarPosition, deckBandColors };")();
+  "\nreturn { wrapGrid, gridBeatsBetween, nudgeGrid, shiftGridBar, setGridTempo, nearestGridBeat, gridBeatAt, gridBarAt, gridBarPosition, deckBandColors, deckVolumes };")();
 
 const near = (a, b, eps = 1e-4) => Math.abs(a - b) < eps;
 // Bar starts between 5 and 15 s, to the millisecond.
@@ -90,6 +90,15 @@ const g = { bpm: 120, firstBeat: 0.1, downbeat: 2 };
   const c = v.deckBandColors({ low: "#FF0000", mid: "red", high: "#00ff00;background:url(x)" }, theme);
   check("цвета волны: свой #rrggbb принят, остальное — цвет темы", c.low === "#ff0000" && c.mid === theme.mid && c.high === theme.high);
   check("цвета волны: ничего не сохранено — цвета темы", JSON.stringify(v.deckBandColors(null, theme)) === JSON.stringify(theme));
+}
+
+{
+  const d = v.deckVolumes(null);
+  check("громкость: по умолчанию трек 0.7, щелчок 0.8", d.music === 0.7 && d.click === 0.8);
+  const c = v.deckVolumes({ music: 0, click: "1.7" });
+  check("громкость: ноль остаётся нулём, лишнее обрезается до 1", c.music === 0 && c.click === 1);
+  check("громкость: мусор из хранилища — значение по умолчанию", v.deckVolumes({ music: "громко", click: null }).music === 0.7
+    && v.deckVolumes({ music: "громко", click: null }).click === 0.8);
 }
 
 const failed = results.filter((line) => line.includes("МИМО"));
