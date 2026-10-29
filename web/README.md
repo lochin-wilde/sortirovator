@@ -405,9 +405,13 @@ along the bottom of the window, laid out the way Rekordbox's is (`js/app.js`,
 `deck`; the grid arithmetic is in `js/views.js`, tested by
 `tools/test/test_grid_edit.mjs`). On top the title, the position in bars,
 elapsed and remaining time, key and tempo, and the whole track; below it the
-waveform moving under a fixed playhead, coloured by band -- red the lows,
-green the mids, blue the highs, so a kick reads as red -- with white beats and
-red bar starts. The file is decoded the way the analysis decoded it, so the
+waveform moving under a fixed playhead, in three layers as in Rekordbox's
+3-band view -- the lows behind, the mids over them, the highs in front, split
+by second-order crossovers at 200 Hz and 2.5 kHz -- with the beats and red bar
+starts over it. It is drawn in the page's own tokens and buttons, so it
+follows the light and dark themes. (Splitting the bands by subtracting
+one-pole low-passes was tried first: their phase lag left a tenth of every
+kick in the highs, and each kick was drawn as a hat.) The file is decoded the way the analysis decoded it, so the
 grid's seconds fall on the same samples, and it plays through Web Audio with a
 metronome scheduled on the same clock as the music; clicks timed against an
 `<audio>` element's `currentTime` drift by tens of milliseconds, the size of
