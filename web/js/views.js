@@ -415,6 +415,36 @@ function setGridTempo(grid, bpm, anchor) {
   return wrapGrid({ ...grid, bpm: rounded, firstBeat: pinned - k * (60 / rounded) });
 }
 
+// The beat nearest `time`: its index k, its seconds, its place in the bar.
+function nearestGridBeat(grid, time) {
+  const period = 60 / grid.bpm;
+  const k = Math.max(0, Math.round((time - grid.firstBeat) / period));
+  return { k, time: grid.firstBeat + k * period, beat: ((((k - (grid.downbeat || 0)) % 4) + 4) % 4) + 1 };
+}
+
+// The grid moved so its nearest beat falls on `time` -- Rekordbox's "set the
+// beat at the playhead", for a kick the grid sits just beside.
+function gridBeatAt(grid, time) {
+  return nudgeGrid(grid, time - nearestGridBeat(grid, time).time);
+}
+
+// The beat nearest `time` made the first of its bar; no beat moves.
+function gridBarAt(grid, time) {
+  return shiftGridBar(grid, nearestGridBeat(grid, time).beat - 1);
+}
+
+/*
+ * Where `time` is, the way a deck shows it: bar 1 starts at the grid's first
+ * bar start, the beat is 1 to 4, and beats before that first bar count as
+ * bar 0.
+ */
+function gridBarPosition(grid, time) {
+  const period = 60 / grid.bpm;
+  const k = Math.max(0, Math.floor((time - grid.firstBeat) / period + 1e-6));
+  const fromBar = k - (grid.downbeat || 0);
+  return { bar: Math.floor(fromBar / 4) + 1, beat: (((fromBar % 4) + 4) % 4) + 1 };
+}
+
 /* ------------------------------------------------------------------ */
 /* The usage count                                                     */
 /* ------------------------------------------------------------------ */

@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.29.1";
+const APP_VERSION = "2026.10.29.2";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -106,6 +106,7 @@ const ui = {
   tableCsv: el("table-csv"),
   actionBarButton: el("action-bar-button"),
   trackPanel: el("track-panel"),
+  deck: el("deck"),
   resultsArea: el("results-area"),
   tableCount: el("table-count"),
   feedbackExport: el("feedback-export"),
@@ -1280,52 +1281,14 @@ function visibleRows() {
 
 /*
  * The open track: on a wide screen in a panel beside the table, otherwise in
- * a row under it. Either way with a player for the file itself -- played from
- * the user's disk, nothing is uploaded.
- *
- * The table is redrawn as each track of a batch finishes, so the player is one
- * element kept across redraws and moved into the new slot: a fresh one would
- * stop the music every few seconds. Moving it in one go does not pause it.
+ * a row under it, and in the deck along the bottom of the window.
  */
 const resultFiles = new WeakMap();
 const PANEL_QUERY = window.matchMedia("(min-width: 1100px)");
-const player = { row: null, url: null, element: null };
-
-function stopPlayer() {
-  if (player.element) {
-    player.element.pause();
-    player.element.remove();
-  }
-  if (player.url) URL.revokeObjectURL(player.url);
-  player.row = null;
-  player.url = null;
-  player.element = null;
-}
-
-function placePlayer() {
-  const slot = document.querySelector(".player-slot");
-  const file = openRow !== null && resultRows[openRow] ? resultFiles.get(resultRows[openRow]) : null;
-  if (!slot || !file) {
-    stopPlayer();
-    return;
-  }
-  if (player.row !== openRow) {
-    stopPlayer();
-    player.row = openRow;
-    player.url = URL.createObjectURL(file);
-    player.element = document.createElement("audio");
-    player.element.controls = true;
-    player.element.preload = "metadata";
-    player.element.src = player.url;
-    player.element.setAttribute("aria-label", t("panel.listen"));
-  }
-  if (player.element.parentNode !== slot) slot.appendChild(player.element);
-}
 
 // A new batch or a cleared one: no open track, nothing playing.
 function clearTrackPanel() {
-  stopPlayer();
-  stopGridEditor();
+  closeDeck();
   ui.trackPanel.innerHTML = "";
   ui.trackPanel.hidden = true;
   ui.resultsArea.classList.remove("with-panel");
@@ -1335,333 +1298,390 @@ function panelHtml(index) {
   const result = resultRows[index];
   return '<div class="panel-head"><h3>' + escapeHtml(trackLabel(result)) + "</h3>" +
     '<button type="button" class="panel-close" data-close aria-label="' + escapeHtml(t("panel.close")) + '">×</button></div>' +
-    '<div class="player-slot"></div>' + (result.grid ? '<div class="grid-slot"></div>' : "") +
     (result.outputPath ? '<p class="hint panel-output">' + escapeHtml(t("panel.output")) + ": " +
       escapeHtml(result.outputPath) + "</p>" : "") +
     detailHtml(index);
 }
 
 /*
- * The grid editor, under the player for a track that has a grid: the
- * waveform with the beats and bars drawn on it, playback with a click on every
- * beat, and the edits a DJ makes in Rekordbox -- nudge, tempo, where the bar
- * starts. An edited grid is the user's and is written whatever the confidence
- * said (applyGridEdit).
+ * The deck: the open track's player and beat grid, along the bottom of the
+ * window the way a DJ program has it. On top the title, the position in bars,
+ * the time, key and tempo, then the whole track; below, the waveform moving
+ * under a fixed playhead with the grid drawn over it, coloured by frequency --
+ * red the lows, green the mids, blue the highs -- so a kick reads as red.
  *
- * Like the player it is one element kept across the table's redraws. It plays
- * through Web Audio rather than the <audio> element so the clicks are
- * scheduled on the same clock as the music: timed against an element's
- * currentTime they drift by tens of milliseconds, which is the size of the
- * error being looked for.
+ * It plays through Web Audio rather than an <audio> element so the metronome
+ * is scheduled on the same clock as the music: clicks timed against an
+ * element's currentTime drift by tens of milliseconds, the size of the error
+ * being looked for. The file is decoded the way the analysis decoded it, so
+ * the grid's seconds fall on the same samples.
+ *
+ * Grid edits go into a draft, kept per track, and reach the archive only on
+ * Save (applyGridEdit). The edits are the ones Rekordbox's GRID panel offers;
+ * the arithmetic is in views.js and tested by tools/test/test_grid_edit.mjs.
  */
-// One bar: about 4 ms a pixel in the side panel at 128 BPM, which is the
-// scale a grid a few milliseconds off is seen at.
-const GRID_VIEW_BEATS = 4;
-// The kick drawn over the waveform: how far the level of the band under
-// GRID_KICK_HZ (two one-pole low-passes) rises above its own slow average. A
-// full-band waveform of a mastered dance track is a solid block at this zoom,
-// and the band's level stays high through a bass line; its rise is a spike at
-// each kick's attack, which is where the grid has to sit.
-const GRID_KICK_HZ = 150;
-const GRID_KICK_FAST = 0.004;
-const GRID_KICK_SLOW = 0.06;
-const GRID_SCHEDULE_AHEAD = 0.12;
-const gridEditor = {
-  row: null, element: null, buffer: null, overview: null, failed: false,
-  context: null, source: null, startedAt: 0, offset: 0, playing: false,
-  scheduled: -1, timer: 0, frame: 0,
+// Zoom: beats across the waveform.
+const DECK_ZOOMS = [4, 8, 16, 32];
+const DECK_ZOOM_DEFAULT = 1;
+// Samples per block of the precomputed waveform: 2.9 ms at 44.1 kHz, finer
+// than a pixel at the closest zoom in a full-width deck.
+const DECK_BLOCK = 128;
+// Band edges for the colours, Hz.
+const DECK_LOW_HZ = 200;
+const DECK_HIGH_HZ = 2500;
+const DECK_SCHEDULE_AHEAD = 0.12;
+
+const deck = {
+  row: null, result: null, buffer: null, wave: null, failed: false,
+  context: null, source: null, startedAt: 0, offset: 0, playing: false, cue: 0,
+  zoom: DECK_ZOOM_DEFAULT, scheduled: -Infinity, timer: 0, frame: 0, drag: null,
 };
+// Unsaved edits, per track: switching tracks keeps them.
+const gridDrafts = new WeakMap();
 
-function stopGridPlayback() {
-  if (gridEditor.source) {
-    gridEditor.source.onended = null;
-    try { gridEditor.source.stop(); } catch (e) { /* already stopped */ }
+function deckGrid() {
+  return deck.result ? gridDrafts.get(deck.result) || deck.result.grid : null;
+}
+
+function deckPosition() {
+  if (!deck.playing) return deck.offset;
+  const at = deck.offset + deck.context.currentTime - deck.startedAt;
+  return Math.min(at, deck.buffer ? deck.buffer.duration : at);
+}
+
+function stopDeckPlayback() {
+  if (deck.source) {
+    deck.source.onended = null;
+    try { deck.source.stop(); } catch (e) { /* already stopped */ }
   }
-  gridEditor.source = null;
-  if (gridEditor.playing) gridEditor.offset = gridPosition();
-  gridEditor.playing = false;
-  clearInterval(gridEditor.timer);
-  cancelAnimationFrame(gridEditor.frame);
+  deck.source = null;
+  if (deck.playing) deck.offset = deckPosition();
+  deck.playing = false;
+  clearInterval(deck.timer);
+  cancelAnimationFrame(deck.frame);
 }
 
-function stopGridEditor() {
-  stopGridPlayback();
-  if (gridEditor.element) gridEditor.element.remove();
-  Object.assign(gridEditor, { row: null, element: null, buffer: null, overview: null, failed: false, offset: 0 });
+function closeDeck() {
+  stopDeckPlayback();
+  Object.assign(deck, { row: null, result: null, buffer: null, wave: null, failed: false, offset: 0, cue: 0 });
+  ui.deck.hidden = true;
+  document.body.classList.remove("deck-open");
 }
 
-function gridPosition() {
-  if (!gridEditor.playing) return gridEditor.offset;
-  const at = gridEditor.offset + gridEditor.context.currentTime - gridEditor.startedAt;
-  return Math.min(at, gridEditor.buffer ? gridEditor.buffer.duration : at);
-}
-
-function placeGridEditor() {
-  const slot = document.querySelector(".grid-slot");
+// Called from renderResults: the deck follows the open row.
+function placeDeck() {
   const result = openRow !== null ? resultRows[openRow] : null;
   const file = result ? resultFiles.get(result) : null;
-  if (!slot || !file || !result.grid) {
-    stopGridEditor();
+  if (!file) {
+    if (deck.result) closeDeck();
     return;
   }
-  if (gridEditor.row !== openRow) {
-    stopGridEditor();
-    gridEditor.row = openRow;
-    gridEditor.element = buildGridEditor();
-    loadGridAudio(openRow, file);
+  if (deck.result !== result) {
+    closeDeck();
+    deck.row = openRow;
+    deck.result = result;
+    buildDeck();
+    loadDeckAudio(result, file);
   }
-  if (gridEditor.element.parentNode !== slot) slot.appendChild(gridEditor.element);
-  renderGridEditor();
+  deck.row = openRow;
+  ui.deck.hidden = false;
+  document.body.classList.add("deck-open");
+  sizeDeckSpace();
+  renderDeck();
 }
 
-function buildGridEditor() {
-  const box = document.createElement("div");
-  box.className = "grid-editor";
-  const button = (action, label, extra = "") =>
-    '<button type="button" class="button small" data-grid="' + action + '"' + extra + ">" + escapeHtml(label) + "</button>";
-  box.innerHTML = '<h4>' + escapeHtml(t("gridEdit.title")) + "</h4>" +
-    '<p class="hint grid-state"></p>' +
-    '<canvas class="grid-overview" aria-label="' + escapeHtml(t("gridEdit.overview")) + '"></canvas>' +
-    '<canvas class="grid-zoom" aria-label="' + escapeHtml(t("gridEdit.zoom")) + '"></canvas>' +
-    '<div class="grid-controls">' +
-      '<div class="grid-row">' + button("play", t("gridEdit.play")) +
-        '<label class="grid-click"><input type="checkbox" data-grid="click" checked> ' + escapeHtml(t("gridEdit.click")) + "</label></div>" +
-      '<div class="grid-row"><span class="grid-label">' + escapeHtml(t("gridEdit.nudge")) + "</span>" +
-        button("nudge", "−10", ' data-by="-0.01"') + button("nudge", "−1", ' data-by="-0.001"') +
-        button("nudge", "+1", ' data-by="0.001"') + button("nudge", "+10", ' data-by="0.01"') +
-        '<span class="hint">' + escapeHtml(t("gridEdit.ms")) + "</span></div>" +
-      '<div class="grid-row"><label class="grid-label" for="grid-bpm">BPM</label>' +
-        '<input type="number" id="grid-bpm" class="grid-bpm" step="0.01" min="' + GRID_EDIT_BPM_MIN + '" max="' + GRID_EDIT_BPM_MAX + '" data-grid="bpm">' +
-        button("tempo", "÷2", ' data-factor="0.5"') + button("tempo", "×2", ' data-factor="2"') + "</div>" +
-      '<div class="grid-row"><span class="grid-label">' + escapeHtml(t("gridEdit.bar")) + "</span>" +
-        button("bar", t("gridEdit.barEarlier"), ' data-by="-1"') + button("bar", t("gridEdit.barLater"), ' data-by="1"') + "</div>" +
-      '<div class="grid-row">' + button("reset", t("gridEdit.reset")) + "</div>" +
+// The page keeps room for the deck, and on a phone the deck sits on the
+// pinned button rather than under it.
+function sizeDeckSpace() {
+  document.body.style.setProperty("--deck-height", ui.deck.offsetHeight + "px");
+  document.body.style.setProperty("--action-bar-height", (document.getElementById("action-bar").offsetHeight || 0) + "px");
+}
+
+function buildDeck() {
+  const button = (attrs, label, title, extraClass = "") =>
+    '<button type="button" class="deck-button' + (extraClass ? " " + extraClass : "") + '" ' + attrs +
+    (title ? ' title="' + escapeHtml(title) + '"' : "") + ">" + escapeHtml(label) + "</button>";
+  ui.deck.innerHTML =
+    '<div class="deck-head">' +
+      '<div class="deck-title"><b class="deck-name"></b> <span class="deck-artist"></span></div>' +
+      '<div class="deck-meta"><span class="deck-bars"></span><span class="deck-time"></span><span class="deck-left"></span>' +
+        '<span class="deck-key"></span><span class="deck-bpm"></span></div>' +
+      '<button type="button" class="deck-close" data-deck="close" aria-label="' + escapeHtml(t("panel.close")) + '">×</button>' +
+    "</div>" +
+    '<canvas class="deck-overview" aria-label="' + escapeHtml(t("deck.overview")) + '"></canvas>' +
+    '<div class="deck-main">' +
+      '<div class="deck-transport">' +
+        button('data-deck="cue"', "CUE", t("deck.cueHint"), "deck-round deck-cue") +
+        button('data-deck="play"', "▶", t("deck.playHint"), "deck-round deck-play") +
+        '<div class="deck-zoom">' + button('data-deck="zoom" data-by="1"', "−", t("deck.zoomOut")) +
+          button('data-deck="zoom" data-by="-1"', "+", t("deck.zoomIn")) + "</div>" +
+      "</div>" +
+      '<canvas class="deck-wave" aria-label="' + escapeHtml(t("deck.wave")) + '"></canvas>' +
+    "</div>" +
+    '<div class="deck-grid">' +
+      '<span class="deck-grid-label">GRID</span>' +
+      '<div class="deck-group">' + button('data-deck="nudge" data-by="-0.01"', "◀◀", t("deck.nudge", { ms: -10 })) +
+        button('data-deck="nudge" data-by="-0.001"', "◀", t("deck.nudge", { ms: -1 })) +
+        button('data-deck="nudge" data-by="0.001"', "▶", t("deck.nudge", { ms: 1 })) +
+        button('data-deck="nudge" data-by="0.01"', "▶▶", t("deck.nudge", { ms: 10 })) + "</div>" +
+      '<div class="deck-group">' + button('data-deck="beat-here"', t("deck.beatHere"), t("deck.beatHereHint")) +
+        button('data-deck="bar-here"', t("deck.barHere"), t("deck.barHereHint")) + "</div>" +
+      '<div class="deck-group"><label class="deck-bpm-label">BPM <input type="number" class="deck-bpm-input" step="0.01" min="' +
+        GRID_EDIT_BPM_MIN + '" max="' + GRID_EDIT_BPM_MAX + '" data-deck="bpm"></label>' +
+        button('data-deck="tempo" data-factor="0.5"', "÷2") + button('data-deck="tempo" data-factor="2"', "×2") + "</div>" +
+      '<label class="deck-click"><input type="checkbox" data-deck="click" checked> ' + escapeHtml(t("deck.click")) + "</label>" +
+      '<div class="deck-group deck-save">' + button('data-deck="save"', t("deck.save"), "", "primary") +
+        button('data-deck="discard"', t("deck.discard")) + button('data-deck="reset"', t("deck.reset")) + "</div>" +
+      '<span class="deck-state hint"></span>' +
     "</div>";
-  box.addEventListener("click", onGridEditorClick);
-  box.addEventListener("change", onGridEditorChange);
-  box.querySelector(".grid-overview").addEventListener("click", (e) => seekGridFrom(e, "overview"));
-  box.querySelector(".grid-zoom").addEventListener("click", (e) => seekGridFrom(e, "zoom"));
-  return box;
 }
 
-// The track decoded the way the analysis decoded it, so the grid's seconds
-// land on the same samples, and a peak per overview pixel.
-async function loadGridAudio(row, file) {
+/*
+ * The track decoded, and the waveform reduced to blocks of DECK_BLOCK
+ * samples: the peak of the whole signal and of the low, mid and high bands.
+ * Done once, so drawing a frame reads a few thousand numbers, not millions.
+ */
+async function loadDeckAudio(result, file) {
   try {
     const buffer = await decodeFile(file);
-    if (gridEditor.row !== row) return;
-    const data = buffer.getChannelData(0);
-    const bins = 1200;
-    const step = Math.max(1, Math.floor(data.length / bins));
-    const overview = new Float32Array(bins);
-    for (let b = 0; b < bins; b++) {
-      let peak = 0;
-      for (let i = b * step, end = Math.min(data.length, i + step); i < end; i += 4) {
-        const v = Math.abs(data[i]);
-        if (v > peak) peak = v;
-      }
-      overview[b] = peak;
-    }
-    gridEditor.buffer = buffer;
-    gridEditor.overview = overview;
-    gridEditor.offset = Math.max(0, resultRows[row].grid.firstBeat);
+    if (deck.result !== result) return;
+    deck.buffer = buffer;
+    deck.wave = deckWaveform(buffer);
+    deck.offset = deck.cue = result.grid ? Math.max(0, result.grid.firstBeat) : 0;
   } catch (e) {
-    if (gridEditor.row === row) gridEditor.failed = true;
+    if (deck.result === result) deck.failed = true;
   }
-  if (gridEditor.row === row) renderGridEditor();
+  if (deck.result === result) renderDeck();
 }
 
-function gridColors() {
+function deckWaveform(buffer) {
+  const rate = buffer.sampleRate;
+  const channels = [];
+  for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) channels.push(buffer.getChannelData(c));
+  const length = channels[0].length;
+  const blocks = Math.ceil(length / DECK_BLOCK);
+  const peak = new Float32Array(blocks), low = new Float32Array(blocks), mid = new Float32Array(blocks), high = new Float32Array(blocks);
+  const aLow = 1 - Math.exp((-2 * Math.PI * DECK_LOW_HZ) / rate);
+  const aHigh = 1 - Math.exp((-2 * Math.PI * DECK_HIGH_HZ) / rate);
+  let l1 = 0, l2 = 0, h1 = 0, h2 = 0;
+  const top = { peak: 1e-6, low: 1e-6, mid: 1e-6, high: 1e-6 };
+  for (let b = 0; b < blocks; b++) {
+    let p = 0, lo = 0, mi = 0, hi = 0;
+    for (let i = b * DECK_BLOCK, end = Math.min(length, i + DECK_BLOCK); i < end; i++) {
+      const x = channels.length === 2 ? (channels[0][i] + channels[1][i]) * 0.5 : channels[0][i];
+      l1 += aLow * (x - l1); l2 += aLow * (l1 - l2);
+      h1 += aHigh * (x - h1); h2 += aHigh * (h1 - h2);
+      const ax = Math.abs(x), al = Math.abs(l2), am = Math.abs(h2 - l2), ah = Math.abs(x - h2);
+      if (ax > p) p = ax;
+      if (al > lo) lo = al;
+      if (am > mi) mi = am;
+      if (ah > hi) hi = ah;
+    }
+    peak[b] = p; low[b] = lo; mid[b] = mi; high[b] = hi;
+    if (p > top.peak) top.peak = p;
+    if (lo > top.low) top.low = lo;
+    if (mi > top.mid) top.mid = mi;
+    if (hi > top.high) top.high = hi;
+  }
+  return { peak, low, mid, high, top, blocksPerSecond: rate / DECK_BLOCK };
+}
+
+function deckColors() {
   const css = getComputedStyle(document.documentElement);
   const read = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
-  return { wave: read("--muted", "#888"), kick: read("--text", "#eee"), beat: read("--muted", "#888"),
-    bar: read("--accent", "#5b8cff"), head: read("--warn", "#e0b341"), window: read("--panel-2", "#222") };
+  return { beat: "rgba(255,255,255,0.55)", bar: read("--err", "#e0655f"), head: "#ffffff", cue: read("--warn", "#e0b341"),
+    played: "rgba(0,0,0,0.45)", text: read("--muted", "#9aa3b2") };
 }
 
-function sizeCanvas(canvas) {
+function sizeDeckCanvas(canvas) {
   const ratio = window.devicePixelRatio || 1;
   const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
   // The CSS height, not the attribute: setting canvas.height rewrites the
-  // attribute, and reading it back grew the canvas on every frame.
+  // attribute, and reading that back would grow the canvas every frame.
   const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
   return { width, height, ratio };
 }
 
-// Where the zoomed view starts: GRID_VIEW_BEATS beats, the playhead in the middle.
-function gridViewStart(grid) {
-  return gridPosition() - (GRID_VIEW_BEATS / 2) * (60 / grid.bpm);
+// One column of the waveform over blocks [from, to): its height and colour.
+function deckColumn(wave, from, to) {
+  let p = 0, lo = 0, mi = 0, hi = 0;
+  for (let b = Math.max(0, from), end = Math.min(wave.peak.length, Math.max(to, from + 1)); b < end; b++) {
+    if (wave.peak[b] > p) p = wave.peak[b];
+    if (wave.low[b] > lo) lo = wave.low[b];
+    if (wave.mid[b] > mi) mi = wave.mid[b];
+    if (wave.high[b] > hi) hi = wave.high[b];
+  }
+  const r = lo / wave.top.low, g = mi / wave.top.mid, b = (hi / wave.top.high) * 1.2;
+  const m = Math.max(r, g, b, 1e-6);
+  const shade = (v) => Math.round(70 + 185 * (v / m));
+  return { height: p / wave.top.peak, color: "rgb(" + shade(r) + "," + shade(g) + "," + shade(b) + ")" };
 }
 
-function renderGridEditor() {
-  const box = gridEditor.element;
-  const result = gridEditor.row !== null ? resultRows[gridEditor.row] : null;
-  if (!box || !result || !result.grid) return;
-  const grid = result.grid;
-  const exp = result.gridRekordbox;
+function renderDeck() {
+  const result = deck.result;
+  if (!result || ui.deck.hidden) return;
+  const grid = deckGrid();
+  const draft = gridDrafts.get(result);
+  const pos = deckPosition();
+  const duration = deck.buffer ? deck.buffer.duration : result.duration || 0;
+  const q = (sel) => ui.deck.querySelector(sel);
+  q(".deck-name").textContent = result.feedbackTitle || result.name;
+  q(".deck-artist").textContent = result.feedbackArtist || "";
+  const place = grid ? gridBarPosition(grid, pos) : null;
+  q(".deck-bars").textContent = place ? place.bar + "." + place.beat + " " + t("deck.bars") : "";
+  q(".deck-time").textContent = formatDeckTime(pos);
+  q(".deck-left").textContent = "−" + formatDeckTime(Math.max(0, duration - pos));
+  q(".deck-key").textContent = result.key || "";
+  q(".deck-bpm").textContent = grid ? grid.bpm.toFixed(2) : (result.bpm ? String(result.bpm) : "");
+  q('[data-deck="play"]').textContent = deck.playing ? "❚❚" : "▶";
+  const bpm = q(".deck-bpm-input");
+  if (grid && document.activeElement !== bpm) bpm.value = grid.bpm.toFixed(2);
+  const ready = Boolean(deck.buffer);
+  ui.deck.querySelectorAll("[data-deck]").forEach((control) => {
+    const action = control.dataset.deck;
+    if (action === "close") return;
+    if (action === "save" || action === "discard") control.disabled = !draft;
+    else if (action === "reset") control.disabled = !result.grid || (!result.grid.edited && !draft);
+    else if (["cue", "play", "zoom"].includes(action)) control.disabled = !ready;
+    else control.disabled = !ready || !grid;
+  });
+  q(".deck-state").textContent = deckStateText(result, grid, draft);
+  drawDeckOverview(q(".deck-overview"), grid, pos, duration);
+  drawDeckWave(q(".deck-wave"), grid, pos);
+}
+
+function deckStateText(result, grid, draft) {
+  if (deck.failed) return t("deck.noAudio");
+  if (!deck.buffer) return t("deck.loading");
+  if (!grid) return t("deck.noGrid");
+  if (draft) return t("deck.unsaved");
   // Rounded down: 0.816 shown as 0.82 next to "not written" reads as a bug
   // when the bar is 0.82.
   const confidence = (Math.floor(grid.confidence * 100) / 100).toFixed(2);
-  box.querySelector(".grid-state").textContent = gridEditor.failed ? t("gridEdit.noAudio")
-    : !gridEditor.buffer ? t("gridEdit.loading")
-    : (grid.edited ? t("gridEdit.edited") : grid.place ? t("gridEdit.computed", { confidence })
-      : t("gridEdit.unsure", { reason: t("grid.reason." + grid.reason), confidence }))
-      + " " + (exp && exp.ok ? t("gridEdit.exported") : exp && exp.reason === "format" ? t("gridEdit.notMp3") : "");
-  const bpm = box.querySelector(".grid-bpm");
-  if (document.activeElement !== bpm) bpm.value = grid.bpm.toFixed(2);
-  box.querySelector('[data-grid="play"]').textContent = t(gridEditor.playing ? "gridEdit.stop" : "gridEdit.play");
-  box.querySelector('[data-grid="reset"]').disabled = !grid.edited;
-  box.querySelectorAll("button, input").forEach((control) => {
-    if (control.dataset.grid !== "reset") control.disabled = !gridEditor.buffer;
-  });
-  drawGridOverview(box.querySelector(".grid-overview"), grid);
-  drawGridZoom(box.querySelector(".grid-zoom"), grid);
+  const verdict = grid.edited ? t("deck.saved") : grid.place ? t("deck.computed", { confidence })
+    : t("deck.unsure", { reason: t("grid.reason." + grid.reason), confidence });
+  const exp = result.gridRekordbox;
+  return verdict + " " + (exp && exp.ok ? t("deck.exported") : exp && exp.reason === "format" ? t("deck.notMp3") : "");
 }
 
-function drawGridOverview(canvas, grid) {
-  const { width, height } = sizeCanvas(canvas);
+function formatDeckTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds - m * 60;
+  return String(m).padStart(2, "0") + ":" + s.toFixed(1).padStart(4, "0");
+}
+
+function drawDeckOverview(canvas, grid, pos, duration) {
+  const { width, height } = sizeDeckCanvas(canvas);
   const g = canvas.getContext("2d");
   g.clearRect(0, 0, width, height);
-  if (!gridEditor.buffer) return;
-  const colors = gridColors();
-  const duration = gridEditor.buffer.duration;
-  const from = gridViewStart(grid);
-  const span = GRID_VIEW_BEATS * (60 / grid.bpm);
-  g.fillStyle = colors.window;
-  g.fillRect((from / duration) * width, 0, (span / duration) * width, height);
-  g.fillStyle = colors.beat;
-  const peaks = gridEditor.overview;
+  if (!deck.wave || !duration) return;
+  const colors = deckColors();
+  const blocks = deck.wave.peak.length;
   for (let x = 0; x < width; x++) {
-    const v = peaks[Math.floor((x / width) * peaks.length)] || 0;
-    const h = Math.max(1, v * height);
+    const col = deckColumn(deck.wave, Math.floor((x / width) * blocks), Math.floor(((x + 1) / width) * blocks));
+    const h = Math.max(1, col.height * height);
+    g.fillStyle = col.color;
+    g.fillRect(x, height - h, 1, h);
+  }
+  const head = Math.round((pos / duration) * width);
+  g.fillStyle = colors.played;
+  g.fillRect(0, 0, head, height);
+  g.fillStyle = colors.cue;
+  g.fillRect(Math.round((deck.cue / duration) * width), 0, 2, height);
+  g.fillStyle = colors.head;
+  g.fillRect(head, 0, 2, height);
+}
+
+function deckSpan(grid) {
+  return DECK_ZOOMS[deck.zoom] * (grid ? 60 / grid.bpm : 0.5);
+}
+
+function drawDeckWave(canvas, grid, pos) {
+  const { width, height, ratio } = sizeDeckCanvas(canvas);
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, width, height);
+  if (!deck.wave) return;
+  const colors = deckColors();
+  const span = deckSpan(grid);
+  const from = pos - span / 2;
+  const bps = deck.wave.blocksPerSecond;
+  for (let x = 0; x < width; x++) {
+    const t0 = from + (x / width) * span;
+    const t1 = from + ((x + 1) / width) * span;
+    if (t1 < 0) continue;
+    const col = deckColumn(deck.wave, Math.floor(t0 * bps), Math.floor(t1 * bps));
+    const h = Math.max(1, col.height * height * 0.95);
+    g.fillStyle = col.color;
     g.fillRect(x, (height - h) / 2, 1, h);
   }
-  g.fillStyle = colors.head;
-  g.fillRect(Math.round((gridPosition() / duration) * width), 0, 2, height);
-}
-
-// Lowest and highest sample in [start, end), zero outside the array.
-function sampleRange(values, start, end) {
-  let lo = 0, hi = 0;
-  for (let i = Math.max(0, start), stop = Math.min(values.length, Math.max(end, start + 1)); i < stop; i++) {
-    if (values[i] < lo) lo = values[i];
-    if (values[i] > hi) hi = values[i];
-  }
-  return [lo, hi];
-}
-
-function drawGridZoom(canvas, grid) {
-  const { width, height, ratio } = sizeCanvas(canvas);
-  const g = canvas.getContext("2d");
-  g.clearRect(0, 0, width, height);
-  if (!gridEditor.buffer) return;
-  const colors = gridColors();
-  const rate = gridEditor.buffer.sampleRate;
-  const data = gridEditor.buffer.getChannelData(0);
-  const from = gridViewStart(grid);
-  const span = GRID_VIEW_BEATS * (60 / grid.bpm);
-  const perPixel = (span * rate) / width;
-  const first = Math.floor(from * rate);
-  // The kick for the samples on screen, the filters run in from 200 ms
-  // before so they have settled by the left edge.
-  const lead = Math.round(0.2 * rate);
-  const count = Math.ceil(span * rate) + 1;
-  const low = new Float32Array(count);
-  const a = 1 - Math.exp((-2 * Math.PI * GRID_KICK_HZ) / rate);
-  const fastHold = Math.exp(-1 / (GRID_KICK_FAST * rate));
-  const slowRate = 1 - Math.exp(-1 / (GRID_KICK_SLOW * rate));
-  let s1 = 0, s2 = 0, fast = 0, slow = 0, peak = 1e-6;
-  for (let i = first - lead; i < first + count; i++) {
-    const x = i >= 0 && i < data.length ? data[i] : 0;
-    s1 += a * (x - s1);
-    s2 += a * (s1 - s2);
-    fast = Math.max(Math.abs(s2), fast * fastHold);
-    slow += slowRate * (fast - slow);
-    if (i >= first) {
-      const rise = Math.max(0, fast - slow);
-      low[i - first] = rise;
-      if (rise > peak) peak = rise;
+  if (grid) {
+    for (const beat of gridBeatsBetween(grid, Math.max(0, from), from + span)) {
+      const x = Math.round(((beat.time - from) / span) * width);
+      const bar = beat.beat === 1;
+      g.fillStyle = bar ? colors.bar : colors.beat;
+      g.fillRect(x - (bar ? ratio : 0), 0, bar ? 2 * ratio : ratio, height);
+      if (bar) {
+        g.fillRect(x - 3 * ratio, 0, 7 * ratio, 4 * ratio);
+        g.fillRect(x - 3 * ratio, height - 4 * ratio, 7 * ratio, 4 * ratio);
+      }
     }
   }
-  for (let x = 0; x < width; x++) {
-    const start = Math.floor(x * perPixel);
-    const end = Math.floor((x + 1) * perPixel);
-    const [lo, hi] = sampleRange(data, first + start, first + end);
-    g.fillStyle = colors.wave;
-    g.globalAlpha = 0.45;
-    g.fillRect(x, (1 - hi) * height / 2, 1, Math.max(1, (hi - lo) * height / 2));
-    g.globalAlpha = 1;
-    const kick = (sampleRange(low, start, end)[1] / peak) * height * 0.9;
-    g.fillStyle = colors.kick;
-    g.fillRect(x, height - kick, 1, kick);
-  }
-  g.font = (11 * ratio) + "px system-ui, sans-serif";
-  for (const beat of gridBeatsBetween(grid, from, from + span)) {
-    const x = Math.round(((beat.time - from) / span) * width);
-    const bar = beat.beat === 1;
-    g.fillStyle = bar ? colors.bar : colors.beat;
-    g.fillRect(x - (bar ? ratio : 0), 0, bar ? 2 * ratio : ratio, height);
-    if (bar) g.fillText("1", x + 3 * ratio, 12 * ratio);
+  if (deck.cue >= from && deck.cue <= from + span) {
+    g.fillStyle = colors.cue;
+    g.fillRect(Math.round(((deck.cue - from) / span) * width), 0, ratio, height);
   }
   g.fillStyle = colors.head;
-  g.fillRect(Math.round(width / 2), 0, ratio, height);
+  g.fillRect(Math.round(width / 2) - ratio, 0, 2 * ratio, height);
 }
 
-window.addEventListener("resize", () => renderGridEditor());
-
-function seekGridFrom(event, which) {
-  const result = resultRows[gridEditor.row];
-  if (!gridEditor.buffer || !result) return;
-  const rect = event.currentTarget.getBoundingClientRect();
-  const share = (event.clientX - rect.left) / rect.width;
-  const span = GRID_VIEW_BEATS * (60 / result.grid.bpm);
-  const to = which === "overview" ? share * gridEditor.buffer.duration : gridViewStart(result.grid) + share * span;
-  seekGrid(Math.min(Math.max(0, to), gridEditor.buffer.duration - 0.05));
+function seekDeck(seconds) {
+  if (!deck.buffer) return;
+  const wasPlaying = deck.playing;
+  stopDeckPlayback();
+  deck.offset = Math.min(Math.max(0, seconds), Math.max(0, deck.buffer.duration - 0.05));
+  if (wasPlaying) startDeckPlayback();
+  else renderDeck();
 }
 
-function seekGrid(seconds) {
-  const wasPlaying = gridEditor.playing;
-  stopGridPlayback();
-  gridEditor.offset = seconds;
-  if (wasPlaying) startGridPlayback();
-  else renderGridEditor();
-}
-
-function startGridPlayback() {
-  if (!gridEditor.buffer) return;
-  if (!gridEditor.context) gridEditor.context = new (window.AudioContext || window.webkitAudioContext)();
-  const context = gridEditor.context;
+function startDeckPlayback() {
+  if (!deck.buffer) return;
+  if (!deck.context) deck.context = new (window.AudioContext || window.webkitAudioContext)();
+  const context = deck.context;
   if (context.state === "suspended") context.resume();
-  if (player.element) player.element.pause();
-  if (gridEditor.offset >= gridEditor.buffer.duration - 0.05) gridEditor.offset = 0;
+  if (deck.offset >= deck.buffer.duration - 0.05) deck.offset = 0;
   const source = context.createBufferSource();
-  source.buffer = gridEditor.buffer;
+  source.buffer = deck.buffer;
   source.connect(context.destination);
-  gridEditor.startedAt = context.currentTime + 0.05;
-  source.start(gridEditor.startedAt, gridEditor.offset);
-  source.onended = () => { if (gridEditor.source === source) { gridEditor.offset = gridEditor.buffer.duration; stopGridPlayback(); renderGridEditor(); } };
-  gridEditor.source = source;
-  gridEditor.playing = true;
-  gridEditor.scheduled = -Infinity;
-  scheduleClicks();
-  gridEditor.timer = setInterval(scheduleClicks, 25);
-  const tick = () => { renderGridEditor(); if (gridEditor.playing) gridEditor.frame = requestAnimationFrame(tick); };
-  gridEditor.frame = requestAnimationFrame(tick);
+  deck.startedAt = context.currentTime + 0.05;
+  source.start(deck.startedAt, deck.offset);
+  source.onended = () => {
+    if (deck.source !== source) return;
+    stopDeckPlayback();
+    deck.offset = deck.buffer.duration;
+    renderDeck();
+  };
+  deck.source = source;
+  deck.playing = true;
+  deck.scheduled = -Infinity;
+  scheduleDeckClicks();
+  deck.timer = setInterval(scheduleDeckClicks, 25);
+  const tick = () => { renderDeck(); if (deck.playing) deck.frame = requestAnimationFrame(tick); };
+  deck.frame = requestAnimationFrame(tick);
 }
 
-// Clicks for the beats due in the next GRID_SCHEDULE_AHEAD seconds, the bar's
-// first beat higher. Scheduled on the audio clock, so each lands on its sample.
-function scheduleClicks() {
-  const result = resultRows[gridEditor.row];
-  const box = gridEditor.element;
-  if (!gridEditor.playing || !result || !box || !box.querySelector('[data-grid="click"]').checked) return;
-  const context = gridEditor.context;
-  const now = gridPosition();
-  for (const beat of gridBeatsBetween(result.grid, now, now + GRID_SCHEDULE_AHEAD)) {
-    if (beat.time <= gridEditor.scheduled + 1e-6) continue;
-    gridEditor.scheduled = beat.time;
-    const at = gridEditor.startedAt + (beat.time - gridEditor.offset);
+// Clicks for the beats due in the next DECK_SCHEDULE_AHEAD seconds, the bar's
+// first beat higher, each on its own sample of the audio clock.
+function scheduleDeckClicks() {
+  const grid = deckGrid();
+  if (!deck.playing || !grid || !ui.deck.querySelector('[data-deck="click"]').checked) return;
+  const context = deck.context;
+  const now = deckPosition();
+  for (const beat of gridBeatsBetween(grid, now, now + DECK_SCHEDULE_AHEAD)) {
+    if (beat.time <= deck.scheduled + 1e-6) continue;
+    deck.scheduled = beat.time;
+    const at = deck.startedAt + (beat.time - deck.offset);
     if (at < context.currentTime) continue;
     const tone = context.createOscillator();
     const gain = context.createGain();
@@ -1674,39 +1694,100 @@ function scheduleClicks() {
   }
 }
 
-function onGridEditorClick(event) {
-  const control = event.target.closest("[data-grid]");
-  const result = resultRows[gridEditor.row];
-  if (!control || !result || control.tagName === "INPUT") return;
-  const grid = result.grid;
-  const action = control.dataset.grid;
-  if (action === "play") {
-    if (gridEditor.playing) { stopGridPlayback(); renderGridEditor(); } else startGridPlayback();
-  } else if (action === "nudge") {
-    applyGridEdit(result, nudgeGrid(grid, Number(control.dataset.by)));
-  } else if (action === "tempo") {
-    applyGridEdit(result, setGridTempo(grid, grid.bpm * Number(control.dataset.factor), gridPosition()));
-  } else if (action === "bar") {
-    applyGridEdit(result, shiftGridBar(grid, Number(control.dataset.by)));
-  } else if (action === "reset" && result.gridOriginal) {
-    applyGridEdit(result, result.gridOriginal, true);
-  }
+// An edit to the draft; the archive is untouched until Save.
+function editDraft(next) {
+  const result = deck.result;
+  if (!result || !next) return;
+  const base = result.grid;
+  const same = next.bpm === base.bpm && Math.abs(next.firstBeat - base.firstBeat) < 1e-6 && next.downbeat === base.downbeat;
+  if (same) gridDrafts.delete(result);
+  else gridDrafts.set(result, { ...base, bpm: next.bpm, firstBeat: next.firstBeat, downbeat: next.downbeat });
+  // A click already scheduled for the old grid would sound off the new one.
+  deck.scheduled = deckPosition() + DECK_SCHEDULE_AHEAD;
+  renderDeck();
 }
 
-function onGridEditorChange(event) {
-  const result = resultRows[gridEditor.row];
-  if (!result || event.target.dataset.grid !== "bpm") return;
-  const next = setGridTempo(result.grid, Number(event.target.value), gridPosition());
-  if (next === result.grid) event.target.value = result.grid.bpm.toFixed(2);
-  else applyGridEdit(result, next);
-}
+ui.deck.addEventListener("click", async (event) => {
+  const control = event.target.closest("[data-deck]");
+  if (!control || control.tagName === "INPUT") return;
+  const result = deck.result;
+  const grid = deckGrid();
+  const pos = deckPosition();
+  switch (control.dataset.deck) {
+    case "close": openRow = null; renderResults(); break;
+    case "play": if (deck.playing) { stopDeckPlayback(); renderDeck(); } else startDeckPlayback(); break;
+    // Rekordbox's CUE: stopped, it marks where it stands; playing, it goes
+    // back to the mark and stops there.
+    case "cue": if (deck.playing) { stopDeckPlayback(); deck.offset = deck.cue; renderDeck(); } else { deck.cue = pos; renderDeck(); } break;
+    case "zoom": deck.zoom = Math.min(DECK_ZOOMS.length - 1, Math.max(0, deck.zoom + Number(control.dataset.by))); renderDeck(); break;
+    case "nudge": editDraft(nudgeGrid(grid, Number(control.dataset.by))); break;
+    case "beat-here": editDraft(gridBeatAt(grid, pos)); break;
+    case "bar-here": editDraft(gridBarAt(grid, pos)); break;
+    case "tempo": editDraft(setGridTempo(grid, grid.bpm * Number(control.dataset.factor), pos)); break;
+    case "save": if (gridDrafts.has(result)) { const draft = gridDrafts.get(result); gridDrafts.delete(result); await applyGridEdit(result, draft); } break;
+    case "discard": gridDrafts.delete(result); renderDeck(); break;
+    case "reset": gridDrafts.delete(result); if (result.gridOriginal) await applyGridEdit(result, result.gridOriginal, true); renderDeck(); break;
+  }
+});
+
+ui.deck.addEventListener("change", (event) => {
+  if (event.target.dataset.deck !== "bpm" || !deck.result) return;
+  const grid = deckGrid();
+  const next = setGridTempo(grid, Number(event.target.value), deckPosition());
+  if (next === grid) event.target.value = grid.bpm.toFixed(2);
+  else editDraft(next);
+});
+
+// The overview jumps; the waveform drags, like a jog wheel.
+ui.deck.addEventListener("pointerdown", (event) => {
+  if (!deck.buffer) return;
+  const canvas = event.target.closest("canvas");
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (canvas.classList.contains("deck-overview")) {
+    seekDeck(((event.clientX - rect.left) / rect.width) * deck.buffer.duration);
+    return;
+  }
+  const wasPlaying = deck.playing;
+  stopDeckPlayback();
+  deck.drag = { x: event.clientX, from: deck.offset, perPixel: deckSpan(deckGrid()) / rect.width, wasPlaying };
+  canvas.setPointerCapture(event.pointerId);
+});
+ui.deck.addEventListener("pointermove", (event) => {
+  if (!deck.drag) return;
+  deck.offset = Math.min(Math.max(0, deck.drag.from - (event.clientX - deck.drag.x) * deck.drag.perPixel), deck.buffer.duration - 0.05);
+  renderDeck();
+});
+const endDeckDrag = () => {
+  if (!deck.drag) return;
+  const resume = deck.drag.wasPlaying;
+  deck.drag = null;
+  if (resume) startDeckPlayback();
+};
+ui.deck.addEventListener("pointerup", endDeckDrag);
+ui.deck.addEventListener("pointercancel", endDeckDrag);
+
+// Space plays and pauses while the deck is open, unless a field or a button
+// has the keyboard -- there the key is theirs.
+document.addEventListener("keydown", (event) => {
+  if (event.code !== "Space" || ui.deck.hidden || !deck.buffer) return;
+  if (event.target.closest("input, textarea, select, button, [contenteditable]")) return;
+  event.preventDefault();
+  if (deck.playing) { stopDeckPlayback(); renderDeck(); } else startDeckPlayback();
+});
+
+window.addEventListener("resize", () => {
+  if (ui.deck.hidden) return;
+  sizeDeckSpace();
+  renderDeck();
+});
 
 /*
- * An edit replaces the grid and marks it the user's: it is written to
- * rekordbox.xml and the Serato tag whatever the confidence was, since a person
- * listened to it. Whether the file can carry one at all -- format, re-encoding,
- * a Serato grid already there -- is decided again as on the first pass.
- * `reset` puts back the computed grid with its own verdict.
+ * A saved grid replaces the computed one and is the user's: it goes into
+ * rekordbox.xml and the Serato tag whatever the confidence said, since a
+ * person listened to it. Whether the file can carry one at all -- format,
+ * re-encoding, a Serato grid already there -- is decided again as on the
+ * first pass. `reset` puts back the computed grid with its own verdict.
  */
 async function applyGridEdit(result, grid, reset = false) {
   if (!result.gridOriginal) result.gridOriginal = { ...result.grid };
@@ -1714,14 +1795,13 @@ async function applyGridEdit(result, grid, reset = false) {
     : { ...result.grid, bpm: grid.bpm, firstBeat: grid.firstBeat, downbeat: grid.downbeat, place: true, reason: null, edited: true };
   if (reset) result.gridOriginal = null;
   state.downloaded = false;
-  renderGridEditor();
   if (result.gridSource && result.outputBlob) {
     const { extension, untouched } = result.gridSource;
     result.gridExport = await gridExportFor(result, extension, result.outputBlob, untouched);
     result.gridRekordbox = await rekordboxGridFor(result, extension, result.outputBlob, untouched);
     renderGridExport();
-    renderGridEditor();
   }
+  renderDeck();
 }
 
 function renderViewChips() {
@@ -1748,8 +1828,7 @@ function renderResults() {
       return '<tr class="track-row' + (open ? " open" : "") + '" tabindex="0" aria-expanded="' + open +
         '" data-track="' + row.index + '">' +
         resultCells(row.result, row.index) + "</tr>" +
-        (open && !wide ? '<tr class="detail-row"><td colspan="7"><div class="player-slot"></div>' +
-          (row.result.grid ? '<div class="grid-slot"></div>' : "") +
+        (open && !wide ? '<tr class="detail-row"><td colspan="7">' +
           detailHtml(row.index) + "</td></tr>" : "");
     })
     .join("");
@@ -1757,8 +1836,7 @@ function renderResults() {
   ui.trackPanel.innerHTML = panelOpen ? panelHtml(openRow) : "";
   ui.trackPanel.hidden = !panelOpen;
   ui.resultsArea.classList.toggle("with-panel", panelOpen);
-  placePlayer();
-  placeGridEditor();
+  placeDeck();
   ui.results.hidden = resultRows.length === 0;
   ui.results.dataset.hide = emptyColumns(resultRows).join(" ");
   ui.tableTools.hidden = resultRows.length === 0;

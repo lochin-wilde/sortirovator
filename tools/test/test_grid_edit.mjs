@@ -11,7 +11,7 @@ const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
 const v = new Function(readFileSync("web/js/views.js", "utf8") +
-  "\nreturn { wrapGrid, gridBeatsBetween, nudgeGrid, shiftGridBar, setGridTempo };")();
+  "\nreturn { wrapGrid, gridBeatsBetween, nudgeGrid, shiftGridBar, setGridTempo, nearestGridBeat, gridBeatAt, gridBarAt, gridBarPosition };")();
 
 const near = (a, b, eps = 1e-4) => Math.abs(a - b) < eps;
 // Bar starts between 5 and 15 s, to the millisecond.
@@ -66,6 +66,23 @@ const g = { bpm: 120, firstBeat: 0.1, downbeat: 2 };
   const old = v.gridBeatsBetween(g, 0, 60).map((b) => b.time);
   const now = new Set(v.gridBeatsBetween(d, 0, 60).map((b) => b.time.toFixed(4)));
   check("×2: все прежние доли остаются долями", old.every((t) => now.has(t.toFixed(4))));
+}
+
+{
+  // g: beats at 0.1, 0.6, 1.1 ... ; 1.1 s starts a bar (downbeat 2).
+  const here = v.gridBeatAt(g, 30.62);
+  const hit = v.nearestGridBeat(here, 30.62);
+  check(`«доля здесь»: ближайшая доля встаёт на курсор (${hit.time.toFixed(4)} с)`, near(hit.time, 30.62));
+  check("«доля здесь»: сдвиг меньше половины доли", Math.abs(here.firstBeat - g.firstBeat) < 0.25);
+  const bar = v.gridBarAt(g, 30.62);
+  check("«такт здесь»: доля у курсора становится первой", v.nearestGridBeat(bar, 30.62).beat === 1 && bar.firstBeat === g.firstBeat);
+  check("«такт здесь» на уже первой доле ничего не меняет", v.gridBarAt(g, 1.1).downbeat === g.downbeat);
+}
+{
+  const at = (t) => { const p = v.gridBarPosition(g, t); return p.bar + "." + p.beat; };
+  check("позиция: первая доля такта 1 — 1.1", at(1.1) === "1.1" && at(1.3) === "1.1");
+  check("позиция: через долю 1.2, через такт 2.1", at(1.6) === "1.2" && at(3.1) === "2.1");
+  check("позиция: доли до первого такта — такт 0", at(0.1) === "0.3" && at(0.6) === "0.4");
 }
 
 const failed = results.filter((line) => line.includes("МИМО"));

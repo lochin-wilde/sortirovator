@@ -93,11 +93,12 @@ for (const page of ["web/index.html", "web/admin.html"]) {
 }
 
 /*
- * The track panel's player plays the user's own file through a blob: URL
- * (app.js, placePlayer). Without media-src the policy falls back to
- * default-src 'self', which refuses it: the player sat dead on the live site
- * while a local preview, sending no policy, played fine, and only the grid
- * editor -- Web Audio, outside media-src -- made a sound.
+ * A player that plays the user's file through a blob: URL needs media-src to
+ * allow it; without, the policy falls back to default-src 'self' and refuses
+ * the file. The track panel had such a player: it sat dead on the live site
+ * while a local preview, sending no policy, played fine. The deck that
+ * replaced it plays through Web Audio, which media-src does not govern, so
+ * the policy stays without blob: until something plays a file that way.
  */
 {
   const csp = (readFileSync("web/_headers", "utf8").match(/Content-Security-Policy:\s*(.+)/) || [])[1] || "";

@@ -11,10 +11,8 @@
   # Everything is served from our own origin -- no CDN, no inline script, no
   # inline style -- so the policy can be strict without exceptions. connect-src
   # lists the only four hosts the app talks to; adding a fifth means editing
-  # this line, which is the point. media-src allows blob: because the track
-  # panel's player plays the user's own file from a blob: URL; without it
-  # default-src refuses the file and the player stays silent.
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; media-src 'self' blob:; connect-src 'self' https://itunes.apple.com https://musicbrainz.org https://ws.audioscrobbler.com https://api.discogs.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+  # this line, which is the point.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://itunes.apple.com https://musicbrainz.org https://ws.audioscrobbler.com https://api.discogs.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
 
 # The entry point must never be cached, or a deploy reaches nobody: it is the
 # file that carries the new ?v= values pointing at everything else.

@@ -400,19 +400,24 @@ it writes is within 20 ms of Rekordbox's own grid for 71%, within 50 ms for
 91%, median 12 ms — LAME MP3s are the spread, where Rekordbox's delay varies
 between about 17 and 45 ms from file to file.
 
-**Checking and editing the grid.** Every track with a grid gets an editor
-under its player (`js/app.js`, `gridEditor`; the edits are pure functions in
-`js/views.js`, tested by `tools/test/test_grid_edit.mjs`). It decodes the file
-the way the analysis did, so the grid's seconds fall on the same samples, and
-draws the whole track and one bar around the playhead: the waveform, the
-kick's attack over it, the beats, and the start of each bar. It plays through
-Web Audio with a click scheduled on every beat on the same clock as the music;
-clicks timed against an `<audio>` element's `currentTime` drift by tens of
-milliseconds, the size of the error being checked. The edits are the ones a
-DJ makes in Rekordbox -- move by 1 or 10 ms, a new tempo (turned about the
-beat under the playhead, so that beat stays put), double or half, the bar a
-beat earlier or later. An edited grid is the user's and goes into
-rekordbox.xml and the Serato tag whatever the confidence said; whether the
+**The deck: checking and editing the grid.** The open track plays in a deck
+along the bottom of the window, laid out the way Rekordbox's is (`js/app.js`,
+`deck`; the grid arithmetic is in `js/views.js`, tested by
+`tools/test/test_grid_edit.mjs`). On top the title, the position in bars,
+elapsed and remaining time, key and tempo, and the whole track; below it the
+waveform moving under a fixed playhead, coloured by band -- red the lows,
+green the mids, blue the highs, so a kick reads as red -- with white beats and
+red bar starts. The file is decoded the way the analysis decoded it, so the
+grid's seconds fall on the same samples, and it plays through Web Audio with a
+metronome scheduled on the same clock as the music; clicks timed against an
+`<audio>` element's `currentTime` drift by tens of milliseconds, the size of
+the error being checked. CUE behaves as on a deck: stopped it marks the spot,
+playing it returns there. The GRID row has Rekordbox's edits: move by 1 or 10
+ms, "beat here" (the nearest beat onto the playhead), "bar here" (the beat at
+the playhead becomes the first of its bar), a tempo turned about the beat
+under the playhead, double and half. Edits are a draft, kept per track while
+the batch is open; Save makes the grid the user's, and it goes into
+rekordbox.xml and the Serato tag whatever the confidence said -- whether the
 file can carry one at all is decided again as on the first pass. Built after
 seven of the owner's tracks went through the page and two grids it was unsure
 of came out a quarter and a half beat off Rekordbox's: those are now one

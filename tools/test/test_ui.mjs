@@ -367,15 +367,17 @@ check("блок архива свёрнут в одну строку, поясн
   check("панель трека стоит рядом с таблицей", /<aside class="track-panel" id="track-panel" hidden><\/aside>/.test(area));
   check("колонка «Результат» помечена в заголовке и в ячейке",
     /<th class="c-output"/.test(html) && cut("resultCells").includes("c-output"));
-  const place = cut("placePlayer");
-  check("плеер создаётся заново только при смене трека, иначе переносится",
-    /player\.row !== openRow/.test(place) && /appendChild\(player\.element\)/.test(place));
-  check("закрытый трек — плеер останавливается и отпускает файл",
-    /\.pause\(\)/.test(cut("stopPlayer")) && /revokeObjectURL/.test(cut("stopPlayer")));
-  check("место для плеера есть и в панели, и в строке под треком",
-    cut("panelHtml").includes("player-slot") && cut("renderResults").includes("player-slot"));
-  check("новая пачка и очистка закрывают трек и плеер", (appSrc.match(/clearTrackPanel\(\);/g) || []).length === 2);
-  check("файл трека запоминается для плеера", /resultFiles\.set\(result, file\)/.test(appSrc));
+  const place = cut("placeDeck");
+  check("дека собирается заново только при смене трека, иначе остаётся играть",
+    /deck\.result !== result/.test(place) && /buildDeck\(\)/.test(place) && /loadDeckAudio\(/.test(place));
+  check("закрытый трек — дека останавливается и отпускает звук",
+    /stopDeckPlayback\(\)/.test(cut("closeDeck")) && /buffer: null/.test(cut("closeDeck")) && /\.stop\(\)/.test(cut("stopDeckPlayback")));
+  check("дека следует за открытым треком при каждой перерисовке", cut("renderResults").includes("placeDeck()"));
+  check("место для деки есть на странице", /<section class="deck" id="deck" hidden/.test(html));
+  check("правка сетки уходит в архив только по «Сохранить»",
+    !/applyGridEdit/.test(cut("editDraft")) && /gridDrafts\.set/.test(cut("editDraft")));
+  check("новая пачка и очистка закрывают трек и деку", (appSrc.match(/clearTrackPanel\(\);/g) || []).length === 2);
+  check("файл трека запоминается для деки", /resultFiles\.set\(result, file\)/.test(appSrc));
 }
 
 /* ---------- Phones ---------- */
