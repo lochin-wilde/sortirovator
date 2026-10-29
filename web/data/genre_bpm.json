@@ -1,0 +1,114 @@
+{
+ "Afro House": {
+  "n": 132,
+  "median": 122,
+  "p10": 118,
+  "p90": 125,
+  "alt_tempo_share": 0.008
+ },
+ "Drum & Bass": {
+  "n": 73,
+  "median": 174,
+  "p10": 172,
+  "p90": 175,
+  "alt_tempo_share": 0.014
+ },
+ "Dubstep": {
+  "n": 647,
+  "median": 141.5,
+  "p10": 130,
+  "p90": 154.4,
+  "alt_tempo_share": 0.002
+ },
+ "Funky / Disco House": {
+  "n": 165,
+  "median": 123,
+  "p10": 119.4,
+  "p90": 126,
+  "alt_tempo_share": 0
+ },
+ "Grime": {
+  "n": 138,
+  "median": 140,
+  "p10": 136,
+  "p90": 170,
+  "alt_tempo_share": 0.014
+ },
+ "Hip-Hop": {
+  "n": 131,
+  "median": 146,
+  "p10": 110,
+  "p90": 188,
+  "alt_tempo_share": 0.053
+ },
+ "House": {
+  "n": 493,
+  "median": 125,
+  "p10": 120,
+  "p90": 128.1,
+  "alt_tempo_share": 0.006
+ },
+ "Jersey Club": {
+  "n": 86,
+  "median": 150,
+  "p10": 140,
+  "p90": 154.5,
+  "alt_tempo_share": 0
+ },
+ "Jungle": {
+  "n": 41,
+  "median": 169.6,
+  "p10": 126,
+  "p90": 180,
+  "alt_tempo_share": 0.024
+ },
+ "Liquid DnB": {
+  "n": 517,
+  "median": 174,
+  "p10": 172,
+  "p90": 175,
+  "alt_tempo_share": 0.027
+ },
+ "Moombahton": {
+  "n": 35,
+  "median": 105,
+  "p10": 90.8,
+  "p90": 130,
+  "alt_tempo_share": 0
+ },
+ "Nu Disco": {
+  "n": 221,
+  "median": 120,
+  "p10": 108,
+  "p90": 126.5,
+  "alt_tempo_share": 0.018
+ },
+ "Old School Hip-Hop": {
+  "n": 318,
+  "median": 188.2,
+  "p10": 170,
+  "p90": 206,
+  "alt_tempo_share": 0.289
+ },
+ "Pop": {
+  "n": 545,
+  "median": 124,
+  "p10": 110,
+  "p90": 130,
+  "alt_tempo_share": 0.031
+ },
+ "Soulful House": {
+  "n": 38,
+  "median": 122,
+  "p10": 118,
+  "p90": 125,
+  "alt_tempo_share": 0
+ },
+ "UK Garage": {
+  "n": 852,
+  "median": 135,
+  "p10": 130,
+  "p90": 140,
+  "alt_tempo_share": 0.001
+ }
+}
