@@ -11,7 +11,7 @@ const results = [];
 const check = (label, cond) => results.push(`  ${cond ? "OK  " : "МИМО"} ${label}`);
 
 const v = new Function(readFileSync("web/js/views.js", "utf8") +
-  "\nreturn { wrapGrid, gridBeatsBetween, nudgeGrid, shiftGridBar, setGridTempo, nearestGridBeat, gridBeatAt, gridBarAt, gridBarPosition };")();
+  "\nreturn { wrapGrid, gridBeatsBetween, nudgeGrid, shiftGridBar, setGridTempo, nearestGridBeat, gridBeatAt, gridBarAt, gridBarPosition, deckBandColors };")();
 
 const near = (a, b, eps = 1e-4) => Math.abs(a - b) < eps;
 // Bar starts between 5 and 15 s, to the millisecond.
@@ -83,6 +83,13 @@ const g = { bpm: 120, firstBeat: 0.1, downbeat: 2 };
   check("позиция: первая доля такта 1 — 1.1", at(1.1) === "1.1" && at(1.3) === "1.1");
   check("позиция: через долю 1.2, через такт 2.1", at(1.6) === "1.2" && at(3.1) === "2.1");
   check("позиция: доли до первого такта — такт 0", at(0.1) === "0.3" && at(0.6) === "0.4");
+}
+
+{
+  const theme = { low: "#5b8cff", mid: "#e0b341", high: "#e7e9ee" };
+  const c = v.deckBandColors({ low: "#FF0000", mid: "red", high: "#00ff00;background:url(x)" }, theme);
+  check("цвета волны: свой #rrggbb принят, остальное — цвет темы", c.low === "#ff0000" && c.mid === theme.mid && c.high === theme.high);
+  check("цвета волны: ничего не сохранено — цвета темы", JSON.stringify(v.deckBandColors(null, theme)) === JSON.stringify(theme));
 }
 
 const failed = results.filter((line) => line.includes("МИМО"));

@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.29.3";
+const APP_VERSION = "2026.10.29.4";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -1405,8 +1405,10 @@ function buildDeck() {
   ui.deck.innerHTML =
     '<div class="deck-head">' +
       '<div class="deck-title"><b class="deck-name"></b> <span class="deck-artist"></span></div>' +
-      '<span class="deck-legend" aria-hidden="true"><span><i class="low"></i>' + escapeHtml(t("deck.low")) +
-        '</span><span><i class="mid"></i>' + escapeHtml(t("deck.mid")) + '</span><span><i class="high"></i>' + escapeHtml(t("deck.high")) + "</span></span>" +
+      '<span class="deck-legend">' + DECK_BANDS.map((band) =>
+        '<label title="' + escapeHtml(t("deck.colorHint")) + '"><input type="color" class="deck-color" data-band="' + band + '"> ' +
+        escapeHtml(t("deck." + band)) + "</label>").join("") +
+        '<button type="button" class="deck-color-reset" data-deck="colors" title="' + escapeHtml(t("deck.colorReset")) + '">↺</button></span>' +
       '<div class="deck-meta"><span class="deck-bars"></span><span class="deck-time"></span><span class="deck-left"></span>' +
         '<span class="deck-key"></span><span class="deck-bpm"></span></div>' +
       '<button type="button" class="deck-close" data-deck="close" aria-label="' + escapeHtml(t("panel.close")) + '">×</button>' +
@@ -1508,12 +1510,27 @@ function deckWaveform(buffer) {
   return { low, mid, high, top, blocksPerSecond: rate / DECK_BLOCK };
 }
 
-// The page's tokens, read live so the deck follows the light and dark themes.
+// The band colours the user picked in the deck's legend, kept in this browser.
+const DECK_COLORS_STORAGE_KEY = "sortirovator.deckColors";
+
+function savedDeckColors() {
+  try { return JSON.parse(localStorage.getItem(DECK_COLORS_STORAGE_KEY) || "null"); } catch (e) { return null; }
+}
+
+// The theme's band colours, before any the user picked.
+function themeBandColors() {
+  const css = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+  return { low: read("--accent", "#5b8cff"), mid: read("--warn", "#e0b341"), high: read("--text", "#e7e9ee") };
+}
+
+// The page's tokens, read live so the deck follows the light and dark themes;
+// the bands in the user's colours where they picked some.
 function deckColors() {
   const css = getComputedStyle(document.documentElement);
   const read = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
   return {
-    low: read("--accent", "#5b8cff"), mid: read("--warn", "#e0b341"), high: read("--text", "#e7e9ee"),
+    ...deckBandColors(savedDeckColors(), themeBandColors()),
     beat: read("--muted", "#9aa3b2"), bar: read("--err", "#e0655f"), head: read("--text", "#e7e9ee"),
     cue: read("--warn", "#e0b341"), played: read("--panel", "#171a21"),
   };
@@ -1588,13 +1605,18 @@ function renderDeck() {
   const ready = Boolean(deck.buffer);
   ui.deck.querySelectorAll("[data-deck]").forEach((control) => {
     const action = control.dataset.deck;
-    if (action === "close") return;
+    if (action === "close" || action === "colors") return;
     if (action === "save" || action === "discard") control.disabled = !draft;
     else if (action === "reset") control.disabled = !result.grid || (!result.grid.edited && !draft);
     else if (["cue", "play", "zoom"].includes(action)) control.disabled = !ready;
     else control.disabled = !ready || !grid;
   });
   q(".deck-state").textContent = deckStateText(result, grid, draft);
+  const bands = deckBandColors(savedDeckColors(), themeBandColors());
+  ui.deck.querySelectorAll(".deck-color").forEach((input) => {
+    if (document.activeElement !== input) input.value = bands[input.dataset.band];
+  });
+  q('[data-deck="colors"]').hidden = !savedDeckColors();
   drawDeckOverview(q(".deck-overview"), grid, pos, duration);
   drawDeckWave(q(".deck-wave"), grid, pos);
 }
@@ -1771,8 +1793,20 @@ ui.deck.addEventListener("click", async (event) => {
     case "tempo": editDraft(setGridTempo(grid, grid.bpm * Number(control.dataset.factor), pos)); break;
     case "save": if (gridDrafts.has(result)) { const draft = gridDrafts.get(result); gridDrafts.delete(result); await applyGridEdit(result, draft); } break;
     case "discard": gridDrafts.delete(result); renderDeck(); break;
+    case "colors": try { localStorage.removeItem(DECK_COLORS_STORAGE_KEY); } catch (e) { /* the theme's colours stay */ } renderDeck(); break;
     case "reset": gridDrafts.delete(result); if (result.gridOriginal) await applyGridEdit(result, result.gridOriginal, true); renderDeck(); break;
   }
+});
+
+// A colour applies as it is dragged in the picker and is kept for next time.
+// Only the bands the user recoloured are kept: the others follow the theme,
+// or the dark theme's near-white highs would stay near-white on a light page.
+ui.deck.addEventListener("input", (event) => {
+  const band = event.target.dataset.band;
+  if (!band) return;
+  const colors = { ...(savedDeckColors() || {}), [band]: event.target.value };
+  try { localStorage.setItem(DECK_COLORS_STORAGE_KEY, JSON.stringify(colors)); } catch (e) { /* this session only */ }
+  renderDeck();
 });
 
 ui.deck.addEventListener("change", (event) => {

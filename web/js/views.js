@@ -445,6 +445,22 @@ function gridBarPosition(grid, time) {
   return { bar: Math.floor(fromBar / 4) + 1, beat: (((fromBar % 4) + 4) % 4) + 1 };
 }
 
+/*
+ * The waveform's band colours: the user's own where they chose one, the
+ * theme's otherwise. Read from browser storage, so anything that is not a
+ * plain #rrggbb is ignored rather than drawn.
+ */
+const DECK_BANDS = ["low", "mid", "high"];
+
+function deckBandColors(saved, defaults) {
+  const out = {};
+  for (const band of DECK_BANDS) {
+    const value = saved && typeof saved[band] === "string" ? saved[band] : "";
+    out[band] = /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : defaults[band];
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* The usage count                                                     */
 /* ------------------------------------------------------------------ */

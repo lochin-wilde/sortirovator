@@ -1038,10 +1038,13 @@ body.deck-open { padding-bottom: calc(var(--deck-height, 260px) + 1rem); }
 .deck-bpm-label, .deck-click { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--muted); font-size: 0.84rem; }
 .deck .deck-bpm-input { width: 5.5rem; padding: 0.25rem 0.4rem; }
 .deck-legend { display: inline-flex; gap: 0.7rem; color: var(--muted); font-size: 0.78rem; }
-.deck-legend i { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 2px; margin-right: 0.25rem; vertical-align: -0.05rem; }
-.deck-legend .low { background: var(--accent); }
-.deck-legend .mid { background: var(--warn); }
-.deck-legend .high { background: var(--text); }
+.deck-legend label { display: inline-flex; align-items: center; gap: 0.25rem; cursor: pointer; }
+.deck .deck-color { width: 1.1rem; height: 1.1rem; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: none; cursor: pointer; }
+.deck .deck-color::-webkit-color-swatch-wrapper { padding: 0; }
+.deck .deck-color::-webkit-color-swatch { border: 0; border-radius: 2px; }
+.deck .deck-color::-moz-color-swatch { border: 0; border-radius: 2px; }
+.deck-color-reset { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 0 0.15rem; font-size: 0.9rem; }
+.deck-color-reset:hover { color: var(--text); }
 .deck-state { flex-basis: 100%; color: var(--muted); font-size: 0.84rem; }
 @media (max-width: 640px) {
   .deck { bottom: var(--action-bar-height, 4.6rem); gap: 0.3rem; padding-top: 0.45rem; }

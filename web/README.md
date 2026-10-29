@@ -409,7 +409,9 @@ waveform moving under a fixed playhead, in three layers as in Rekordbox's
 3-band view -- the lows behind, the mids over them, the highs in front, split
 by second-order crossovers at 200 Hz and 2.5 kHz -- with the beats and red bar
 starts over it. It is drawn in the page's own tokens and buttons, so it
-follows the light and dark themes. (Splitting the bands by subtracting
+follows the light and dark themes; each band's colour can be changed from the
+legend, and only the bands recoloured are kept (browser storage), so the
+others still follow the theme. (Splitting the bands by subtracting
 one-pole low-passes was tried first: their phase lag left a tenth of every
 kick in the highs, and each kick was drawn as a hat.) The file is decoded the way the analysis decoded it, so the
 grid's seconds fall on the same samples, and it plays through Web Audio with a
