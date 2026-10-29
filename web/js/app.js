@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.28.13";
+const APP_VERSION = "2026.10.29.1";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -997,6 +997,8 @@ async function processFile(file, options, slot) {
   const audioIsOriginal = outputBlob === file;
   outputBlob = await tagOutput(result, outputExtension, outputBlob);
   result.outputBlob = outputBlob;
+  // Kept so an edited grid can be judged for export again (applyGridEdit).
+  result.gridSource = { extension: outputExtension, untouched: audioIsOriginal };
   result.gridExport = await gridExportFor(result, outputExtension, outputBlob, audioIsOriginal);
   result.gridRekordbox = await rekordboxGridFor(result, outputExtension, outputBlob, audioIsOriginal);
 
@@ -1118,7 +1120,9 @@ function describeResult(result) {
     bpmText = String(result.bpm);
   }
   lines.push(t("res.bpmKey", { bpm: bpmText, key: keyText }));
-  if (result.grid) {
+  if (result.grid && result.grid.edited) {
+    lines.push(t("res.gridEdited", { bpm: result.grid.bpm.toFixed(2), first: result.grid.firstBeat.toFixed(3) }));
+  } else if (result.grid) {
     lines.push(result.grid.place
       ? t("res.grid", { bpm: result.grid.bpm.toFixed(2), first: result.grid.firstBeat.toFixed(3), confidence: result.grid.confidence.toFixed(2) })
       : t("res.gridWithheld", { reason: t("grid.reason." + result.grid.reason), confidence: result.grid.confidence.toFixed(2) }));
@@ -1321,6 +1325,7 @@ function placePlayer() {
 // A new batch or a cleared one: no open track, nothing playing.
 function clearTrackPanel() {
   stopPlayer();
+  stopGridEditor();
   ui.trackPanel.innerHTML = "";
   ui.trackPanel.hidden = true;
   ui.resultsArea.classList.remove("with-panel");
@@ -1330,10 +1335,393 @@ function panelHtml(index) {
   const result = resultRows[index];
   return '<div class="panel-head"><h3>' + escapeHtml(trackLabel(result)) + "</h3>" +
     '<button type="button" class="panel-close" data-close aria-label="' + escapeHtml(t("panel.close")) + '">×</button></div>' +
-    '<div class="player-slot"></div>' +
+    '<div class="player-slot"></div>' + (result.grid ? '<div class="grid-slot"></div>' : "") +
     (result.outputPath ? '<p class="hint panel-output">' + escapeHtml(t("panel.output")) + ": " +
       escapeHtml(result.outputPath) + "</p>" : "") +
     detailHtml(index);
+}
+
+/*
+ * The grid editor, under the player for a track that has a grid: the
+ * waveform with the beats and bars drawn on it, playback with a click on every
+ * beat, and the edits a DJ makes in Rekordbox -- nudge, tempo, where the bar
+ * starts. An edited grid is the user's and is written whatever the confidence
+ * said (applyGridEdit).
+ *
+ * Like the player it is one element kept across the table's redraws. It plays
+ * through Web Audio rather than the <audio> element so the clicks are
+ * scheduled on the same clock as the music: timed against an element's
+ * currentTime they drift by tens of milliseconds, which is the size of the
+ * error being looked for.
+ */
+// One bar: about 4 ms a pixel in the side panel at 128 BPM, which is the
+// scale a grid a few milliseconds off is seen at.
+const GRID_VIEW_BEATS = 4;
+// The kick drawn over the waveform: how far the level of the band under
+// GRID_KICK_HZ (two one-pole low-passes) rises above its own slow average. A
+// full-band waveform of a mastered dance track is a solid block at this zoom,
+// and the band's level stays high through a bass line; its rise is a spike at
+// each kick's attack, which is where the grid has to sit.
+const GRID_KICK_HZ = 150;
+const GRID_KICK_FAST = 0.004;
+const GRID_KICK_SLOW = 0.06;
+const GRID_SCHEDULE_AHEAD = 0.12;
+const gridEditor = {
+  row: null, element: null, buffer: null, overview: null, failed: false,
+  context: null, source: null, startedAt: 0, offset: 0, playing: false,
+  scheduled: -1, timer: 0, frame: 0,
+};
+
+function stopGridPlayback() {
+  if (gridEditor.source) {
+    gridEditor.source.onended = null;
+    try { gridEditor.source.stop(); } catch (e) { /* already stopped */ }
+  }
+  gridEditor.source = null;
+  if (gridEditor.playing) gridEditor.offset = gridPosition();
+  gridEditor.playing = false;
+  clearInterval(gridEditor.timer);
+  cancelAnimationFrame(gridEditor.frame);
+}
+
+function stopGridEditor() {
+  stopGridPlayback();
+  if (gridEditor.element) gridEditor.element.remove();
+  Object.assign(gridEditor, { row: null, element: null, buffer: null, overview: null, failed: false, offset: 0 });
+}
+
+function gridPosition() {
+  if (!gridEditor.playing) return gridEditor.offset;
+  const at = gridEditor.offset + gridEditor.context.currentTime - gridEditor.startedAt;
+  return Math.min(at, gridEditor.buffer ? gridEditor.buffer.duration : at);
+}
+
+function placeGridEditor() {
+  const slot = document.querySelector(".grid-slot");
+  const result = openRow !== null ? resultRows[openRow] : null;
+  const file = result ? resultFiles.get(result) : null;
+  if (!slot || !file || !result.grid) {
+    stopGridEditor();
+    return;
+  }
+  if (gridEditor.row !== openRow) {
+    stopGridEditor();
+    gridEditor.row = openRow;
+    gridEditor.element = buildGridEditor();
+    loadGridAudio(openRow, file);
+  }
+  if (gridEditor.element.parentNode !== slot) slot.appendChild(gridEditor.element);
+  renderGridEditor();
+}
+
+function buildGridEditor() {
+  const box = document.createElement("div");
+  box.className = "grid-editor";
+  const button = (action, label, extra = "") =>
+    '<button type="button" class="button small" data-grid="' + action + '"' + extra + ">" + escapeHtml(label) + "</button>";
+  box.innerHTML = '<h4>' + escapeHtml(t("gridEdit.title")) + "</h4>" +
+    '<p class="hint grid-state"></p>' +
+    '<canvas class="grid-overview" aria-label="' + escapeHtml(t("gridEdit.overview")) + '"></canvas>' +
+    '<canvas class="grid-zoom" aria-label="' + escapeHtml(t("gridEdit.zoom")) + '"></canvas>' +
+    '<div class="grid-controls">' +
+      '<div class="grid-row">' + button("play", t("gridEdit.play")) +
+        '<label class="grid-click"><input type="checkbox" data-grid="click" checked> ' + escapeHtml(t("gridEdit.click")) + "</label></div>" +
+      '<div class="grid-row"><span class="grid-label">' + escapeHtml(t("gridEdit.nudge")) + "</span>" +
+        button("nudge", "−10", ' data-by="-0.01"') + button("nudge", "−1", ' data-by="-0.001"') +
+        button("nudge", "+1", ' data-by="0.001"') + button("nudge", "+10", ' data-by="0.01"') +
+        '<span class="hint">' + escapeHtml(t("gridEdit.ms")) + "</span></div>" +
+      '<div class="grid-row"><label class="grid-label" for="grid-bpm">BPM</label>' +
+        '<input type="number" id="grid-bpm" class="grid-bpm" step="0.01" min="' + GRID_EDIT_BPM_MIN + '" max="' + GRID_EDIT_BPM_MAX + '" data-grid="bpm">' +
+        button("tempo", "÷2", ' data-factor="0.5"') + button("tempo", "×2", ' data-factor="2"') + "</div>" +
+      '<div class="grid-row"><span class="grid-label">' + escapeHtml(t("gridEdit.bar")) + "</span>" +
+        button("bar", t("gridEdit.barEarlier"), ' data-by="-1"') + button("bar", t("gridEdit.barLater"), ' data-by="1"') + "</div>" +
+      '<div class="grid-row">' + button("reset", t("gridEdit.reset")) + "</div>" +
+    "</div>";
+  box.addEventListener("click", onGridEditorClick);
+  box.addEventListener("change", onGridEditorChange);
+  box.querySelector(".grid-overview").addEventListener("click", (e) => seekGridFrom(e, "overview"));
+  box.querySelector(".grid-zoom").addEventListener("click", (e) => seekGridFrom(e, "zoom"));
+  return box;
+}
+
+// The track decoded the way the analysis decoded it, so the grid's seconds
+// land on the same samples, and a peak per overview pixel.
+async function loadGridAudio(row, file) {
+  try {
+    const buffer = await decodeFile(file);
+    if (gridEditor.row !== row) return;
+    const data = buffer.getChannelData(0);
+    const bins = 1200;
+    const step = Math.max(1, Math.floor(data.length / bins));
+    const overview = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+      let peak = 0;
+      for (let i = b * step, end = Math.min(data.length, i + step); i < end; i += 4) {
+        const v = Math.abs(data[i]);
+        if (v > peak) peak = v;
+      }
+      overview[b] = peak;
+    }
+    gridEditor.buffer = buffer;
+    gridEditor.overview = overview;
+    gridEditor.offset = Math.max(0, resultRows[row].grid.firstBeat);
+  } catch (e) {
+    if (gridEditor.row === row) gridEditor.failed = true;
+  }
+  if (gridEditor.row === row) renderGridEditor();
+}
+
+function gridColors() {
+  const css = getComputedStyle(document.documentElement);
+  const read = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+  return { wave: read("--muted", "#888"), kick: read("--text", "#eee"), beat: read("--muted", "#888"),
+    bar: read("--accent", "#5b8cff"), head: read("--warn", "#e0b341"), window: read("--panel-2", "#222") };
+}
+
+function sizeCanvas(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+  // The CSS height, not the attribute: setting canvas.height rewrites the
+  // attribute, and reading it back grew the canvas on every frame.
+  const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  return { width, height, ratio };
+}
+
+// Where the zoomed view starts: GRID_VIEW_BEATS beats, the playhead in the middle.
+function gridViewStart(grid) {
+  return gridPosition() - (GRID_VIEW_BEATS / 2) * (60 / grid.bpm);
+}
+
+function renderGridEditor() {
+  const box = gridEditor.element;
+  const result = gridEditor.row !== null ? resultRows[gridEditor.row] : null;
+  if (!box || !result || !result.grid) return;
+  const grid = result.grid;
+  const exp = result.gridRekordbox;
+  // Rounded down: 0.816 shown as 0.82 next to "not written" reads as a bug
+  // when the bar is 0.82.
+  const confidence = (Math.floor(grid.confidence * 100) / 100).toFixed(2);
+  box.querySelector(".grid-state").textContent = gridEditor.failed ? t("gridEdit.noAudio")
+    : !gridEditor.buffer ? t("gridEdit.loading")
+    : (grid.edited ? t("gridEdit.edited") : grid.place ? t("gridEdit.computed", { confidence })
+      : t("gridEdit.unsure", { reason: t("grid.reason." + grid.reason), confidence }))
+      + " " + (exp && exp.ok ? t("gridEdit.exported") : exp && exp.reason === "format" ? t("gridEdit.notMp3") : "");
+  const bpm = box.querySelector(".grid-bpm");
+  if (document.activeElement !== bpm) bpm.value = grid.bpm.toFixed(2);
+  box.querySelector('[data-grid="play"]').textContent = t(gridEditor.playing ? "gridEdit.stop" : "gridEdit.play");
+  box.querySelector('[data-grid="reset"]').disabled = !grid.edited;
+  box.querySelectorAll("button, input").forEach((control) => {
+    if (control.dataset.grid !== "reset") control.disabled = !gridEditor.buffer;
+  });
+  drawGridOverview(box.querySelector(".grid-overview"), grid);
+  drawGridZoom(box.querySelector(".grid-zoom"), grid);
+}
+
+function drawGridOverview(canvas, grid) {
+  const { width, height } = sizeCanvas(canvas);
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, width, height);
+  if (!gridEditor.buffer) return;
+  const colors = gridColors();
+  const duration = gridEditor.buffer.duration;
+  const from = gridViewStart(grid);
+  const span = GRID_VIEW_BEATS * (60 / grid.bpm);
+  g.fillStyle = colors.window;
+  g.fillRect((from / duration) * width, 0, (span / duration) * width, height);
+  g.fillStyle = colors.beat;
+  const peaks = gridEditor.overview;
+  for (let x = 0; x < width; x++) {
+    const v = peaks[Math.floor((x / width) * peaks.length)] || 0;
+    const h = Math.max(1, v * height);
+    g.fillRect(x, (height - h) / 2, 1, h);
+  }
+  g.fillStyle = colors.head;
+  g.fillRect(Math.round((gridPosition() / duration) * width), 0, 2, height);
+}
+
+// Lowest and highest sample in [start, end), zero outside the array.
+function sampleRange(values, start, end) {
+  let lo = 0, hi = 0;
+  for (let i = Math.max(0, start), stop = Math.min(values.length, Math.max(end, start + 1)); i < stop; i++) {
+    if (values[i] < lo) lo = values[i];
+    if (values[i] > hi) hi = values[i];
+  }
+  return [lo, hi];
+}
+
+function drawGridZoom(canvas, grid) {
+  const { width, height, ratio } = sizeCanvas(canvas);
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, width, height);
+  if (!gridEditor.buffer) return;
+  const colors = gridColors();
+  const rate = gridEditor.buffer.sampleRate;
+  const data = gridEditor.buffer.getChannelData(0);
+  const from = gridViewStart(grid);
+  const span = GRID_VIEW_BEATS * (60 / grid.bpm);
+  const perPixel = (span * rate) / width;
+  const first = Math.floor(from * rate);
+  // The kick for the samples on screen, the filters run in from 200 ms
+  // before so they have settled by the left edge.
+  const lead = Math.round(0.2 * rate);
+  const count = Math.ceil(span * rate) + 1;
+  const low = new Float32Array(count);
+  const a = 1 - Math.exp((-2 * Math.PI * GRID_KICK_HZ) / rate);
+  const fastHold = Math.exp(-1 / (GRID_KICK_FAST * rate));
+  const slowRate = 1 - Math.exp(-1 / (GRID_KICK_SLOW * rate));
+  let s1 = 0, s2 = 0, fast = 0, slow = 0, peak = 1e-6;
+  for (let i = first - lead; i < first + count; i++) {
+    const x = i >= 0 && i < data.length ? data[i] : 0;
+    s1 += a * (x - s1);
+    s2 += a * (s1 - s2);
+    fast = Math.max(Math.abs(s2), fast * fastHold);
+    slow += slowRate * (fast - slow);
+    if (i >= first) {
+      const rise = Math.max(0, fast - slow);
+      low[i - first] = rise;
+      if (rise > peak) peak = rise;
+    }
+  }
+  for (let x = 0; x < width; x++) {
+    const start = Math.floor(x * perPixel);
+    const end = Math.floor((x + 1) * perPixel);
+    const [lo, hi] = sampleRange(data, first + start, first + end);
+    g.fillStyle = colors.wave;
+    g.globalAlpha = 0.45;
+    g.fillRect(x, (1 - hi) * height / 2, 1, Math.max(1, (hi - lo) * height / 2));
+    g.globalAlpha = 1;
+    const kick = (sampleRange(low, start, end)[1] / peak) * height * 0.9;
+    g.fillStyle = colors.kick;
+    g.fillRect(x, height - kick, 1, kick);
+  }
+  g.font = (11 * ratio) + "px system-ui, sans-serif";
+  for (const beat of gridBeatsBetween(grid, from, from + span)) {
+    const x = Math.round(((beat.time - from) / span) * width);
+    const bar = beat.beat === 1;
+    g.fillStyle = bar ? colors.bar : colors.beat;
+    g.fillRect(x - (bar ? ratio : 0), 0, bar ? 2 * ratio : ratio, height);
+    if (bar) g.fillText("1", x + 3 * ratio, 12 * ratio);
+  }
+  g.fillStyle = colors.head;
+  g.fillRect(Math.round(width / 2), 0, ratio, height);
+}
+
+window.addEventListener("resize", () => renderGridEditor());
+
+function seekGridFrom(event, which) {
+  const result = resultRows[gridEditor.row];
+  if (!gridEditor.buffer || !result) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  const share = (event.clientX - rect.left) / rect.width;
+  const span = GRID_VIEW_BEATS * (60 / result.grid.bpm);
+  const to = which === "overview" ? share * gridEditor.buffer.duration : gridViewStart(result.grid) + share * span;
+  seekGrid(Math.min(Math.max(0, to), gridEditor.buffer.duration - 0.05));
+}
+
+function seekGrid(seconds) {
+  const wasPlaying = gridEditor.playing;
+  stopGridPlayback();
+  gridEditor.offset = seconds;
+  if (wasPlaying) startGridPlayback();
+  else renderGridEditor();
+}
+
+function startGridPlayback() {
+  if (!gridEditor.buffer) return;
+  if (!gridEditor.context) gridEditor.context = new (window.AudioContext || window.webkitAudioContext)();
+  const context = gridEditor.context;
+  if (context.state === "suspended") context.resume();
+  if (player.element) player.element.pause();
+  if (gridEditor.offset >= gridEditor.buffer.duration - 0.05) gridEditor.offset = 0;
+  const source = context.createBufferSource();
+  source.buffer = gridEditor.buffer;
+  source.connect(context.destination);
+  gridEditor.startedAt = context.currentTime + 0.05;
+  source.start(gridEditor.startedAt, gridEditor.offset);
+  source.onended = () => { if (gridEditor.source === source) { gridEditor.offset = gridEditor.buffer.duration; stopGridPlayback(); renderGridEditor(); } };
+  gridEditor.source = source;
+  gridEditor.playing = true;
+  gridEditor.scheduled = -Infinity;
+  scheduleClicks();
+  gridEditor.timer = setInterval(scheduleClicks, 25);
+  const tick = () => { renderGridEditor(); if (gridEditor.playing) gridEditor.frame = requestAnimationFrame(tick); };
+  gridEditor.frame = requestAnimationFrame(tick);
+}
+
+// Clicks for the beats due in the next GRID_SCHEDULE_AHEAD seconds, the bar's
+// first beat higher. Scheduled on the audio clock, so each lands on its sample.
+function scheduleClicks() {
+  const result = resultRows[gridEditor.row];
+  const box = gridEditor.element;
+  if (!gridEditor.playing || !result || !box || !box.querySelector('[data-grid="click"]').checked) return;
+  const context = gridEditor.context;
+  const now = gridPosition();
+  for (const beat of gridBeatsBetween(result.grid, now, now + GRID_SCHEDULE_AHEAD)) {
+    if (beat.time <= gridEditor.scheduled + 1e-6) continue;
+    gridEditor.scheduled = beat.time;
+    const at = gridEditor.startedAt + (beat.time - gridEditor.offset);
+    if (at < context.currentTime) continue;
+    const tone = context.createOscillator();
+    const gain = context.createGain();
+    tone.frequency.value = beat.beat === 1 ? 1760 : 1100;
+    gain.gain.setValueAtTime(0.35, at);
+    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.035);
+    tone.connect(gain).connect(context.destination);
+    tone.start(at);
+    tone.stop(at + 0.04);
+  }
+}
+
+function onGridEditorClick(event) {
+  const control = event.target.closest("[data-grid]");
+  const result = resultRows[gridEditor.row];
+  if (!control || !result || control.tagName === "INPUT") return;
+  const grid = result.grid;
+  const action = control.dataset.grid;
+  if (action === "play") {
+    if (gridEditor.playing) { stopGridPlayback(); renderGridEditor(); } else startGridPlayback();
+  } else if (action === "nudge") {
+    applyGridEdit(result, nudgeGrid(grid, Number(control.dataset.by)));
+  } else if (action === "tempo") {
+    applyGridEdit(result, setGridTempo(grid, grid.bpm * Number(control.dataset.factor), gridPosition()));
+  } else if (action === "bar") {
+    applyGridEdit(result, shiftGridBar(grid, Number(control.dataset.by)));
+  } else if (action === "reset" && result.gridOriginal) {
+    applyGridEdit(result, result.gridOriginal, true);
+  }
+}
+
+function onGridEditorChange(event) {
+  const result = resultRows[gridEditor.row];
+  if (!result || event.target.dataset.grid !== "bpm") return;
+  const next = setGridTempo(result.grid, Number(event.target.value), gridPosition());
+  if (next === result.grid) event.target.value = result.grid.bpm.toFixed(2);
+  else applyGridEdit(result, next);
+}
+
+/*
+ * An edit replaces the grid and marks it the user's: it is written to
+ * rekordbox.xml and the Serato tag whatever the confidence was, since a person
+ * listened to it. Whether the file can carry one at all -- format, re-encoding,
+ * a Serato grid already there -- is decided again as on the first pass.
+ * `reset` puts back the computed grid with its own verdict.
+ */
+async function applyGridEdit(result, grid, reset = false) {
+  if (!result.gridOriginal) result.gridOriginal = { ...result.grid };
+  result.grid = reset ? { ...result.gridOriginal }
+    : { ...result.grid, bpm: grid.bpm, firstBeat: grid.firstBeat, downbeat: grid.downbeat, place: true, reason: null, edited: true };
+  if (reset) result.gridOriginal = null;
+  state.downloaded = false;
+  renderGridEditor();
+  if (result.gridSource && result.outputBlob) {
+    const { extension, untouched } = result.gridSource;
+    result.gridExport = await gridExportFor(result, extension, result.outputBlob, untouched);
+    result.gridRekordbox = await rekordboxGridFor(result, extension, result.outputBlob, untouched);
+    renderGridExport();
+    renderGridEditor();
+  }
 }
 
 function renderViewChips() {
@@ -1361,6 +1749,7 @@ function renderResults() {
         '" data-track="' + row.index + '">' +
         resultCells(row.result, row.index) + "</tr>" +
         (open && !wide ? '<tr class="detail-row"><td colspan="7"><div class="player-slot"></div>' +
+          (row.result.grid ? '<div class="grid-slot"></div>' : "") +
           detailHtml(row.index) + "</td></tr>" : "");
     })
     .join("");
@@ -1369,6 +1758,7 @@ function renderResults() {
   ui.trackPanel.hidden = !panelOpen;
   ui.resultsArea.classList.toggle("with-panel", panelOpen);
   placePlayer();
+  placeGridEditor();
   ui.results.hidden = resultRows.length === 0;
   ui.results.dataset.hide = emptyColumns(resultRows).join(" ");
   ui.tableTools.hidden = resultRows.length === 0;

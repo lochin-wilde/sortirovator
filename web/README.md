@@ -400,6 +400,24 @@ it writes is within 20 ms of Rekordbox's own grid for 71%, within 50 ms for
 91%, median 12 ms — LAME MP3s are the spread, where Rekordbox's delay varies
 between about 17 and 45 ms from file to file.
 
+**Checking and editing the grid.** Every track with a grid gets an editor
+under its player (`js/app.js`, `gridEditor`; the edits are pure functions in
+`js/views.js`, tested by `tools/test/test_grid_edit.mjs`). It decodes the file
+the way the analysis did, so the grid's seconds fall on the same samples, and
+draws the whole track and one bar around the playhead: the waveform, the
+kick's attack over it, the beats, and the start of each bar. It plays through
+Web Audio with a click scheduled on every beat on the same clock as the music;
+clicks timed against an `<audio>` element's `currentTime` drift by tens of
+milliseconds, the size of the error being checked. The edits are the ones a
+DJ makes in Rekordbox -- move by 1 or 10 ms, a new tempo (turned about the
+beat under the playhead, so that beat stays put), double or half, the bar a
+beat earlier or later. An edited grid is the user's and goes into
+rekordbox.xml and the Serato tag whatever the confidence said; whether the
+file can carry one at all is decided again as on the first pass. Built after
+seven of the owner's tracks went through the page and two grids it was unsure
+of came out a quarter and a half beat off Rekordbox's: those are now one
+listen and two clicks from being written.
+
 ### Key
 
 **The key comes from a convolutional network** — Korzeniowski & Widmer,

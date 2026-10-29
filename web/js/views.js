@@ -354,6 +354,68 @@ function tableCsv(rows, headers) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Editing a beat grid                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A grid is { bpm, firstBeat, downbeat }: beats at firstBeat + k * period for
+ * k >= 0, firstBeat inside the first beat, and beat k starts a bar when
+ * (k - downbeat) is a multiple of four (beatgrid.js, estimateBeatGrid). Every
+ * edit keeps that form, so whatever writes the grid -- rekordbox.xml, the
+ * Serato tag -- needs no changes for an edited one.
+ */
+const GRID_EDIT_BPM_MIN = 40;
+const GRID_EDIT_BPM_MAX = 300;
+
+// firstBeat brought back inside the first beat, the bars kept where they are:
+// with the first beat a whole beat earlier, every beat's number goes up by one.
+function wrapGrid(grid) {
+  const period = 60 / grid.bpm;
+  const beats = Math.floor(grid.firstBeat / period);
+  const firstBeat = Math.round((grid.firstBeat - beats * period) * 100000) / 100000;
+  const downbeat = ((((grid.downbeat || 0) + beats) % 4) + 4) % 4;
+  return { ...grid, firstBeat, downbeat };
+}
+
+// Every beat in [from, to], seconds, with its place in the bar (1 to 4).
+function gridBeatsBetween(grid, from, to) {
+  const period = 60 / grid.bpm;
+  const out = [];
+  for (let k = Math.max(0, Math.ceil((from - grid.firstBeat) / period)); ; k++) {
+    const time = grid.firstBeat + k * period;
+    if (time > to) break;
+    out.push({ time, beat: ((((k - (grid.downbeat || 0)) % 4) + 4) % 4) + 1 });
+  }
+  return out;
+}
+
+// The whole grid later (positive) or earlier, in seconds.
+function nudgeGrid(grid, seconds) {
+  return wrapGrid({ ...grid, firstBeat: grid.firstBeat + seconds });
+}
+
+// The bar starting one beat later (+1) or earlier (-1); the beats stay put.
+function shiftGridBar(grid, beats) {
+  return { ...grid, downbeat: ((((grid.downbeat || 0) + beats) % 4) + 4) % 4 };
+}
+
+/*
+ * A new tempo, turning the grid about the beat nearest `anchor` -- where the
+ * user is looking -- so that beat stays where it was and keeps its place in
+ * the bar. Turning it about the first beat instead would throw a beat at the
+ * second minute off by a whole beat for a change of a fraction of a BPM.
+ * Returns the grid unchanged for a tempo outside what a track can have.
+ */
+function setGridTempo(grid, bpm, anchor) {
+  if (!(bpm >= GRID_EDIT_BPM_MIN && bpm <= GRID_EDIT_BPM_MAX)) return grid;
+  const rounded = Math.round(bpm * 100) / 100;
+  const period = 60 / grid.bpm;
+  const k = Math.max(0, Math.round(((anchor || 0) - grid.firstBeat) / period));
+  const pinned = grid.firstBeat + k * period;
+  return wrapGrid({ ...grid, bpm: rounded, firstBeat: pinned - k * (60 / rounded) });
+}
+
+/* ------------------------------------------------------------------ */
 /* The usage count                                                     */
 /* ------------------------------------------------------------------ */
 
