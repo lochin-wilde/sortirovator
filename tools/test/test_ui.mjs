@@ -374,22 +374,14 @@ check("блок архива свёрнут в одну строку, поясн
     /stopDeckPlayback\(\)/.test(cut("closeDeck")) && /buffer: null/.test(cut("closeDeck")) && /\.stop\(\)/.test(cut("stopDeckPlayback")));
   check("дека следует за открытым треком при каждой перерисовке", cut("renderResults").includes("placeDeck()"));
   check("место для деки есть на странице", /<section class="deck" id="deck" hidden/.test(html));
-  // The waveform's three bands: a tone lands in its own band.
-  const constant = (name) => (appSrc.match(new RegExp("const " + name + " = [^;]+;")) || [""])[0];
-  const bands = new Function(["DECK_BLOCK", "DECK_LOW_HZ", "DECK_HIGH_HZ", "DECK_BAND_GAIN"].map(constant).join("\n") +
-    cut("biquad") + cut("deckWaveform") + cut("deckColumn") + "return { deckWaveform, deckColumn };")();
-  const tone = (hz, seconds = 1) => {
-    const data = Float32Array.from({ length: 44100 * seconds }, (_, i) => Math.sin(2 * Math.PI * hz * i / 44100));
-    return { sampleRate: 44100, numberOfChannels: 1, getChannelData: () => data };
-  };
-  const column = (hz) => bands.deckColumn(bands.deckWaveform(tone(hz)), 100, 200);
-  const loudest = (hz) => { const col = column(hz); return ["low", "mid", "high"].reduce((a, b) => (col[b] > col[a] ? b : a)); };
-  check("волна: 60 Гц — в низах, 1 кГц — в середине, 8 кГц — в верхах",
-    loudest(60) === "low" && loudest(1000) === "mid" && loudest(8000) === "high");
-  // Subtracting one-pole low-passes left a tenth of a kick in the highs,
-  // drawn as a hat on every beat.
-  const kick = column(60);
-  check(`волна: бочка не протекает в верхи (${(kick.high / kick.low * 100).toFixed(1)}% от низов)`, kick.high < 0.02 * kick.low);
+  // Cutting the old waveform out once took the band-colour helpers with it,
+  // and the deck threw on open.
+  check("помощники цветов деки на месте и используются",
+    ["savedDeckColors", "themeBandColors", "savedDeckVolumes", "deckAudio"].every((name) => { try { return cut(name).length > 0; } catch (e) { return false; } })
+    && /savedDeckColors\(\)/.test(cut("deckColors")) && /themeBandColors\(\)/.test(cut("deckColors")));
+  check("волна считается в waveform.js, а он загружается раньше app.js",
+    /computeWaveform\(channels, buffer\.sampleRate\)/.test(cut("loadDeckAudio"))
+    && html.indexOf("js/waveform.js") > 0 && html.indexOf("js/waveform.js") < html.indexOf("js/app.js"));
   check("метроном и трек идут через свои регуляторы громкости",
     /connect\(deck\.clickGain\)/.test(cut("scheduleDeckClicks")) && /connect\(deck\.musicGain\)/.test(cut("startDeckPlayback"))
     && !/connect\(context\.destination\)/.test(cut("scheduleDeckClicks")));

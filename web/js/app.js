@@ -25,7 +25,7 @@
  * indefinitely -- which is exactly what happened here during development, with
  * a stale worker quietly dropping a newly added field.
  */
-const APP_VERSION = "2026.10.29.5";
+const APP_VERSION = "2026.10.29.6";
 
 const SUPPORTED_EXTENSIONS = [".mp3", ".wav", ".flac", ".m4a"];
 // Mirror the worker's gates: KEY_CNN_MIN_CONFIDENCE in keycnn.js for the
@@ -1324,12 +1324,6 @@ function panelHtml(index) {
 // Zoom: beats across the waveform.
 const DECK_ZOOMS = [4, 8, 16, 32];
 const DECK_ZOOM_DEFAULT = 1;
-// Samples per block of the precomputed waveform: 2.9 ms at 44.1 kHz, finer
-// than a pixel at the closest zoom in a full-width deck.
-const DECK_BLOCK = 128;
-// Band edges for the colours, Hz.
-const DECK_LOW_HZ = 200;
-const DECK_HIGH_HZ = 2500;
 const DECK_SCHEDULE_AHEAD = 0.12;
 
 const deck = {
@@ -1446,72 +1440,23 @@ function buildDeck() {
 }
 
 /*
- * The track decoded, and the waveform reduced to blocks of DECK_BLOCK
- * samples: the peak of the low, mid and high bands in each.
- * Done once, so drawing a frame reads a few thousand numbers, not millions.
+ * The track decoded, and its three-band waveform computed once (waveform.js),
+ * so drawing a frame reads a few thousand numbers, not millions. Nothing of it
+ * is stored: a new version's waveform is always computed by the new code.
  */
 async function loadDeckAudio(result, file) {
   try {
     const buffer = await decodeFile(file);
     if (deck.result !== result) return;
     deck.buffer = buffer;
-    deck.wave = deckWaveform(buffer);
+    const channels = [];
+    for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) channels.push(buffer.getChannelData(c));
+    deck.wave = computeWaveform(channels, buffer.sampleRate);
     deck.offset = deck.cue = result.grid ? Math.max(0, result.grid.firstBeat) : 0;
   } catch (e) {
     if (deck.result === result) deck.failed = true;
   }
   if (deck.result === result) renderDeck();
-}
-
-/*
- * A second-order Butterworth section (the RBJ cookbook's), as a function of
- * one sample. The bands need real crossovers: built by subtracting one-pole
- * low-passes from the signal they leak -- the filters' phase lag leaves about
- * a tenth of a kick in the "highs", which drew every kick as a hat.
- */
-function biquad(type, hz, rate) {
-  const w = (2 * Math.PI * hz) / rate;
-  const cos = Math.cos(w);
-  const alpha = Math.sin(w) / (2 * Math.SQRT1_2);
-  const a0 = 1 + alpha;
-  const b0 = (type === "low" ? (1 - cos) / 2 : (1 + cos) / 2) / a0;
-  const b1 = (type === "low" ? 1 - cos : -(1 + cos)) / a0;
-  const a1 = (-2 * cos) / a0, a2 = (1 - alpha) / a0;
-  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-  return (x) => {
-    const y = b0 * x + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2;
-    x2 = x1; x1 = x; y2 = y1; y1 = y;
-    return y;
-  };
-}
-
-function deckWaveform(buffer) {
-  const rate = buffer.sampleRate;
-  const channels = [];
-  for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) channels.push(buffer.getChannelData(c));
-  const length = channels[0].length;
-  const blocks = Math.ceil(length / DECK_BLOCK);
-  const low = new Float32Array(blocks), mid = new Float32Array(blocks), high = new Float32Array(blocks);
-  const lowPass = biquad("low", DECK_LOW_HZ, rate);
-  const midHigh = biquad("high", DECK_LOW_HZ, rate);
-  const midLow = biquad("low", DECK_HIGH_HZ, rate);
-  const highPass = biquad("high", DECK_HIGH_HZ, rate);
-  const top = { low: 1e-6, mid: 1e-6, high: 1e-6 };
-  for (let b = 0; b < blocks; b++) {
-    let lo = 0, mi = 0, hi = 0;
-    for (let i = b * DECK_BLOCK, end = Math.min(length, i + DECK_BLOCK); i < end; i++) {
-      const x = channels.length === 2 ? (channels[0][i] + channels[1][i]) * 0.5 : channels[0][i];
-      const al = Math.abs(lowPass(x)), am = Math.abs(midLow(midHigh(x))), ah = Math.abs(highPass(x));
-      if (al > lo) lo = al;
-      if (am > mi) mi = am;
-      if (ah > hi) hi = ah;
-    }
-    low[b] = lo; mid[b] = mi; high[b] = hi;
-    if (lo > top.low) top.low = lo;
-    if (mi > top.mid) top.mid = mi;
-    if (hi > top.high) top.high = hi;
-  }
-  return { low, mid, high, top, blocksPerSecond: rate / DECK_BLOCK };
 }
 
 // The band colours the user picked in the deck's legend, kept in this browser.
@@ -1551,36 +1496,12 @@ function sizeDeckCanvas(canvas) {
   return { width, height, ratio };
 }
 
-/*
- * One column of the waveform over blocks [from, to): the height of each band,
- * 0 to 1. The bands share one scale, the loudest band anywhere in the track,
- * so a bass-heavy track looks bass-heavy; the mids and highs are lifted a
- * little, since a hat is a small fraction of a mastered track's peak and
- * would otherwise be a line of pixels.
- */
-const DECK_BAND_GAIN = { low: 1, mid: 1.3, high: 1.8 };
-
-function deckColumn(wave, from, to) {
-  let lo = 0, mi = 0, hi = 0;
-  for (let b = Math.max(0, from), end = Math.min(wave.low.length, Math.max(to, from + 1)); b < end; b++) {
-    if (wave.low[b] > lo) lo = wave.low[b];
-    if (wave.mid[b] > mi) mi = wave.mid[b];
-    if (wave.high[b] > hi) hi = wave.high[b];
-  }
-  const scale = Math.max(wave.top.low, wave.top.mid, wave.top.high);
-  return {
-    low: Math.min(1, (lo / scale) * DECK_BAND_GAIN.low),
-    mid: Math.min(1, (mi / scale) * DECK_BAND_GAIN.mid),
-    high: Math.min(1, (hi / scale) * DECK_BAND_GAIN.high),
-  };
-}
-
-// The three layers of one column: lows behind, highs in front. `centre`
-// draws them about the middle (the moving waveform), otherwise up from the
-// bottom (the overview).
+// The three layers of one column, nested: lows behind and widest, highs in
+// front and narrowest (WAVEFORM_LAYER_SCALE). `centre` draws them about the
+// middle (the moving waveform), otherwise up from the bottom (the overview).
 function drawDeckColumn(g, colors, col, x, height, centre) {
   for (const band of ["low", "mid", "high"]) {
-    const h = Math.max(band === "low" ? 1 : 0, col[band] * height * (centre ? 0.96 : 1));
+    const h = Math.max(band === "low" ? 1 : 0, col[band] * WAVEFORM_LAYER_SCALE[band] * height * (centre ? 0.96 : 1));
     if (h <= 0) continue;
     g.fillStyle = colors[band];
     g.fillRect(x, centre ? (height - h) / 2 : height - h, 1, h);
@@ -1657,7 +1578,7 @@ function drawDeckOverview(canvas, grid, pos, duration) {
   const colors = deckColors();
   const blocks = deck.wave.low.length;
   for (let x = 0; x < width; x++) {
-    drawDeckColumn(g, colors, deckColumn(deck.wave, Math.floor((x / width) * blocks), Math.floor(((x + 1) / width) * blocks)), x, height, false);
+    drawDeckColumn(g, colors, waveformColumn(deck.wave, Math.floor((x / width) * blocks), Math.floor(((x + 1) / width) * blocks)), x, height, false);
   }
   const head = Math.round((pos / duration) * width);
   g.globalAlpha = 0.55;
@@ -1682,12 +1603,12 @@ function drawDeckWave(canvas, grid, pos) {
   const colors = deckColors();
   const span = deckSpan(grid);
   const from = pos - span / 2;
-  const bps = deck.wave.blocksPerSecond;
+  const bps = deck.wave.framesPerSecond;
   for (let x = 0; x < width; x++) {
     const t0 = from + (x / width) * span;
     const t1 = from + ((x + 1) / width) * span;
     if (t1 < 0) continue;
-    drawDeckColumn(g, colors, deckColumn(deck.wave, Math.floor(t0 * bps), Math.floor(t1 * bps)), x, height, true);
+    drawDeckColumn(g, colors, waveformColumn(deck.wave, Math.floor(t0 * bps), Math.floor(t1 * bps)), x, height, true);
   }
   if (grid) {
     for (const beat of gridBeatsBetween(grid, Math.max(0, from), from + span)) {
@@ -1898,6 +1819,10 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
   if (deck.playing) { stopDeckPlayback(); renderDeck(); } else startDeckPlayback();
 });
+
+// The canvases are drawn in the theme's colours: a paused deck redraws when
+// the system switches between light and dark.
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => renderDeck());
 
 window.addEventListener("resize", () => {
   if (ui.deck.hidden) return;

@@ -71,8 +71,10 @@ opens the second): *Process files* (drop zone and preset cards, the four switche
 into "fine-tuning", beside them the `.setup-plan` summary with the Start button; then the
 results section, hidden until a run or a `notify()`: archive preview folded to one line,
 search and the all/check/mix views, the table; a clicked track opens in `#track-panel`
-beside it on wide screens or in a row under it, with one `<audio>` element kept across
-redraws (`placePlayer`), its Camelot/tempo neighbours and the `describeResult` reasoning;
+beside it on wide screens or in a row under it, with its Camelot/tempo neighbours and the
+`describeResult` reasoning, and plays in `#deck` along the bottom of the window (`placeDeck`:
+Web Audio playback with a metronome, the three-band waveform from `waveform.js`, grid
+edits kept as a draft until Save — `applyGridEdit` — then written to rekordbox.xml/Serato);
 under 640px the table is cards and `#action-bar` pins Start/Cancel/Download, mirroring
 the real button via `syncActionBar`) and *Rekordbox collection*. The one lookups block
 (`#lookups-panel`) is physically moved into whichever mode is showing, so both read the

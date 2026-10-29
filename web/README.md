@@ -406,14 +406,23 @@ along the bottom of the window, laid out the way Rekordbox's is (`js/app.js`,
 `tools/test/test_grid_edit.mjs`). On top the title, the position in bars,
 elapsed and remaining time, key and tempo, and the whole track; below it the
 waveform moving under a fixed playhead, in three layers as in Rekordbox's
-3-band view -- the lows behind, the mids over them, the highs in front, split
-by second-order crossovers at 200 Hz and 2.5 kHz -- with the beats and red bar
-starts over it. It is drawn in the page's own tokens and buttons, so it
-follows the light and dark themes; each band's colour can be changed from the
-legend, and only the bands recoloured are kept (browser storage), so the
-others still follow the theme. (Splitting the bands by subtracting
-one-pole low-passes was tried first: their phase lag left a tenth of every
-kick in the highs, and each kick was drawn as a hat.) The file is decoded the way the analysis decoded it, so the
+3-band view, with the beats and red bar starts over it. The bands
+(`js/waveform.js`, tested by `tools/test/test_waveform.mjs`) are split by
+Linkwitz-Riley crossovers at 150 Hz and 2.5 kHz, the lows computed at a
+sixteenth of the rate and the mids at a quarter; each band is a 15 ms RMS
+held with an instant attack and a 60 ms release, scaled to its own 99.5th
+percentile over the track and compressed (power 0.8), and the layers are
+drawn nested -- lows full height, mids 0.6, highs 0.35 -- so a kick stands out
+of the mids and a snare can never stand taller than it. The first version
+took peaks, scaled all three bands by the one loudest, lifted the mids 1.3x
+and the highs 1.8x and drew them at one height: on synthetic house its kick
+came out at 0.45 of full height and the snare at 1.0. The new one takes 0.35 s
+a track where that took 0.71 s (ten library tracks, 39 minutes), on the main
+thread when the deck opens; the analysis workers are untouched. It is drawn in
+the page's own tokens and buttons, so it follows the light and dark themes;
+each band's colour can be changed from the legend, and only the bands
+recoloured are kept (browser storage), so the others still follow the theme.
+The file is decoded the way the analysis decoded it, so the
 grid's seconds fall on the same samples, and it plays through Web Audio with a
 metronome scheduled on the same clock as the music; clicks timed against an
 `<audio>` element's `currentTime` drift by tens of milliseconds, the size of
@@ -995,6 +1004,20 @@ points of exact answers and 17 of wrong ones, and its confidence does not
 say which: 25% exact at 0.2-0.4, 22% above 0.6. An honest blank is worth more
 than that. The runner and the comparison are `tools/measure/effnet_run.py`
 and `compare_effnet.mjs`.
+
+**Tempo as a genre hint, measured and not used.** `tools/build/build_genre_bpm.mjs`
+builds a genre -> tempo range table from a Rekordbox collection export -- the
+genre from the folder a track was filed into, since the export's Genre field
+was empty on 76% of 4772 tracks -- with double- and half-time tracks folded
+into the genre's octave and counted (29% of 90s hip-hop is in the other
+octave). Built on half the tracks and scored on the other half: the tempo
+alone names the folder's genre for 48.9% against 19.2% for always saying the
+commonest, but only where genres differ in tempo (liquid drum and bass 93%,
+dubstep 78%); Afro, funky/disco, nu disco and soulful house all sit at
+122-125 and come out 0%. As a tie-break between the genres Discogs,
+MusicBrainz and iTunes returned it changed 1 answer of 138 (McNemar 0 vs 1),
+and as a guess where the app says Unknown it was right 12 times and wrong 44.
+No gain, so `identify.js` does not use it.
 
 Three rules shape this, all from measurement rather than guesswork:
 
