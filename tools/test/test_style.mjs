@@ -92,6 +92,21 @@ for (const page of ["web/index.html", "web/admin.html"]) {
     !/<style[\s>]/i.test(html) && !/\sstyle\s*=/i.test(html));
 }
 
+/*
+ * The track panel's player plays the user's own file through a blob: URL
+ * (app.js, placePlayer). Without media-src the policy falls back to
+ * default-src 'self', which refuses it: the player sat dead on the live site
+ * while a local preview, sending no policy, played fine, and only the grid
+ * editor -- Web Audio, outside media-src -- made a sound.
+ */
+{
+  const csp = (readFileSync("web/_headers", "utf8").match(/Content-Security-Policy:\s*(.+)/) || [])[1] || "";
+  const directive = (name) => (csp.split(";").map((d) => d.trim().split(/\s+/)).find((d) => d[0] === name) || []).slice(1);
+  const usesBlobAudio = /createObjectURL\(file\)/.test(readFileSync("web/js/app.js", "utf8"));
+  check("CSP: плеер может играть файл с диска (media-src 'self' blob:)",
+    !usesBlobAudio || (directive("media-src").includes("blob:") && directive("media-src").includes("'self'")));
+}
+
 // The link card is drawn by a script, so it is checked against the same system.
 const og = readFileSync("tools/build/make_og_image.py", "utf8");
 const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ");
